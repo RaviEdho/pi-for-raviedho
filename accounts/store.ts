@@ -322,6 +322,22 @@ export class AccountStore {
       return undefined;
     };
 
+    const extractPlanTypeFromJwt = (token?: string): string | undefined => {
+      if (!token) return undefined;
+      try {
+        const parts = token.split(".");
+        if (parts.length === 3) {
+          const raw = Buffer.from(parts[1], "base64").toString("utf-8");
+          const payload = JSON.parse(raw);
+          const plan = payload?.["https://api.openai.com/auth"]?.chatgpt_plan_type;
+          return typeof plan === "string" && plan.trim().length > 0 ? plan.trim().toLowerCase() : undefined;
+        }
+      } catch {
+        // Ignore
+      }
+      return undefined;
+    };
+
     // Check ~/.pi/agent/auth.json
     const piAuthPath = this.piAuthPath;
     if (existsSync(piAuthPath)) {
@@ -346,6 +362,10 @@ export class AccountStore {
             const identity = email || accountId || (projectId && projectId !== "aicode-consumers" ? projectId : undefined) || tokenSuffix || "default";
             const id = AccountStore.generateAccountId(provider, identity);
 
+            const planType =
+              (typeof cred.planType === "string" ? cred.planType : undefined) ||
+              (provider === "openai-codex" ? extractPlanTypeFromJwt(access) : undefined) ||
+              (provider === "google-antigravity" ? "free-tier" : undefined);
             const isOAuth = cred.type === "oauth" || !!cred.access;
             const existing = findExisting(provider, email, accountId, id, refresh);
 
@@ -357,6 +377,7 @@ export class AccountStore {
                 email,
                 accountId,
                 projectId,
+                planType,
                 access,
                 refresh,
                 expires: typeof cred.expires === "number" ? cred.expires : undefined,
@@ -371,6 +392,7 @@ export class AccountStore {
               if (email && !existing.email) existing.email = email;
               if (accountId && !existing.accountId) existing.accountId = accountId;
               if (projectId && !existing.projectId) existing.projectId = projectId;
+              if (planType && !existing.planType) existing.planType = planType;
               const credExpires = typeof cred.expires === "number" ? cred.expires : undefined;
               const isPiAuthNewer =
                 !existing.access ||

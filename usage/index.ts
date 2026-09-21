@@ -84,12 +84,8 @@ export async function collectUsageReports(
       const isSession = sessionAccount?.id === acc.id;
       const isCooldown = acc.blockedUntil && acc.blockedUntil > Date.now();
       const mins = isCooldown ? Math.max(1, Math.ceil((acc.blockedUntil! - Date.now()) / 60000)) : 0;
-      const statusTag = isCooldown
-        ? `[COOLDOWN ~${mins}m]`
-        : isSession
-        ? "(Active)"
-        : "(Standby)";
-      const label = `${acc.email || acc.id} ${statusTag}`;
+      const cooldownTag = isCooldown ? ` [COOLDOWN ~${mins}m]` : "";
+      const label = `${acc.email || acc.id}${cooldownTag}`;
 
       try {
         const token = await balancer.ensureFreshToken(acc);
@@ -97,7 +93,8 @@ export async function collectUsageReports(
           token,
           acc.projectId || "aicode-consumers",
           label,
-          signal
+          signal,
+          acc.planType
         );
         report.isSessionAccount = isSession;
         report.accountId = acc.id;
@@ -107,9 +104,10 @@ export async function collectUsageReports(
         reports.push({
           providerId: "google-antigravity",
           providerName: "Google Antigravity",
-          accountEmail: acc.email || acc.id,
+          accountEmail: label,
           accountId: acc.id,
           isSessionAccount: isSession,
+          planType: acc.planType,
           fetchedAt: Date.now(),
           groups: [],
           error: err instanceof Error ? err.message : String(err),
@@ -144,12 +142,8 @@ export async function collectUsageReports(
       const isSession = sessionAccount?.id === acc.id;
       const isCooldown = acc.blockedUntil && acc.blockedUntil > Date.now();
       const mins = isCooldown ? Math.max(1, Math.ceil((acc.blockedUntil! - Date.now()) / 60000)) : 0;
-      const statusTag = isCooldown
-        ? `[COOLDOWN ~${mins}m]`
-        : isSession
-        ? "(Active)"
-        : "(Standby)";
-      const label = `${acc.email || acc.accountId || acc.id} ${statusTag}`;
+      const cooldownTag = isCooldown ? ` [COOLDOWN ~${mins}m]` : "";
+      const label = `${acc.email || acc.accountId || acc.id}${cooldownTag}`;
 
       try {
         const token = await balancer.ensureFreshToken(acc);
@@ -168,9 +162,10 @@ export async function collectUsageReports(
         reports.push({
           providerId: "openai-codex",
           providerName: "OpenAI Codex",
-          accountEmail: acc.email || acc.accountId || acc.id,
+          accountEmail: label,
           accountId: acc.id,
           isSessionAccount: isSession,
+          planType: acc.planType,
           fetchedAt: Date.now(),
           groups: [],
           error: err instanceof Error ? err.message : String(err),
