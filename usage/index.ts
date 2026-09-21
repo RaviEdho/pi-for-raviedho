@@ -72,7 +72,8 @@ export async function collectUsageReports(
   const antigravityAccounts = store.list("google-antigravity");
   const codexAccounts = store.list("openai-codex");
 
-  // 1. Google Antigravity multi-account fetch
+  // 1. Google Antigravity multi-account fetch in parallel
+  const antigravityPromises: Promise<ProviderUsageReport>[] = [];
   if (antigravityAccounts.length > 0) {
     const sessionAccount = balancer.getSessionAccount(
       "google-antigravity",
@@ -87,50 +88,59 @@ export async function collectUsageReports(
       const cooldownTag = isCooldown ? ` [COOLDOWN ~${mins}m]` : "";
       const label = `${acc.email || acc.id}${cooldownTag}`;
 
-      try {
-        const token = await balancer.ensureFreshToken(acc);
-        const report = await fetchAntigravityUsage(
-          token,
-          acc.projectId || "aicode-consumers",
-          label,
-          signal,
-          acc.planType
-        );
-        report.isSessionAccount = isSession;
-        report.accountId = acc.id;
-        QuotaManager.getInstance().setReport(acc.id, report);
-        reports.push(report);
-      } catch (err) {
-        reports.push({
-          providerId: "google-antigravity",
-          providerName: "Google Antigravity",
-          accountEmail: label,
-          accountId: acc.id,
-          isSessionAccount: isSession,
-          planType: acc.planType,
-          fetchedAt: Date.now(),
-          groups: [],
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
+      antigravityPromises.push(
+        (async (): Promise<ProviderUsageReport> => {
+          try {
+            const token = await balancer.ensureFreshToken(acc);
+            const report = await fetchAntigravityUsage(
+              token,
+              acc.projectId || "aicode-consumers",
+              label,
+              signal,
+              acc.planType
+            );
+            report.isSessionAccount = isSession;
+            report.accountId = acc.id;
+            QuotaManager.getInstance().setReport(acc.id, report);
+            return report;
+          } catch (err) {
+            return {
+              providerId: "google-antigravity",
+              providerName: "Google Antigravity",
+              accountEmail: label,
+              accountId: acc.id,
+              isSessionAccount: isSession,
+              planType: acc.planType,
+              fetchedAt: Date.now(),
+              groups: [],
+              error: err instanceof Error ? err.message : String(err),
+            };
+          }
+        })()
+      );
     }
   } else {
     // Fallback to auth.json
     const authMap = loadConfiguredAuth();
     const antigravity = authMap["google-antigravity"];
     if (antigravity?.access && antigravity.projectId) {
-      const report = await fetchAntigravityUsage(
-        antigravity.access,
-        antigravity.projectId,
-        antigravity.email,
-        signal
+      antigravityPromises.push(
+        (async (): Promise<ProviderUsageReport> => {
+          const report = await fetchAntigravityUsage(
+            antigravity.access!,
+            antigravity.projectId!,
+            antigravity.email,
+            signal
+          );
+          report.isSessionAccount = true;
+          return report;
+        })()
       );
-      report.isSessionAccount = true;
-      reports.push(report);
     }
   }
 
-  // 2. OpenAI Codex multi-account fetch
+  // 2. OpenAI Codex multi-account fetch in parallel
+  const codexPromises: Promise<ProviderUsageReport>[] = [];
   if (codexAccounts.length > 0) {
     const sessionAccount = balancer.getSessionAccount(
       "openai-codex",
@@ -145,47 +155,63 @@ export async function collectUsageReports(
       const cooldownTag = isCooldown ? ` [COOLDOWN ~${mins}m]` : "";
       const label = `${acc.email || acc.accountId || acc.id}${cooldownTag}`;
 
-      try {
-        const token = await balancer.ensureFreshToken(acc);
-        const report = await fetchCodexUsage({
-          accessToken: token,
-          accountId: acc.accountId,
-          email: label,
-          refreshToken: acc.refresh,
-          signal,
-        });
-        report.isSessionAccount = isSession;
-        report.accountId = acc.id;
-        QuotaManager.getInstance().setReport(acc.id, report);
-        reports.push(report);
-      } catch (err) {
-        reports.push({
-          providerId: "openai-codex",
-          providerName: "OpenAI Codex",
-          accountEmail: label,
-          accountId: acc.id,
-          isSessionAccount: isSession,
-          planType: acc.planType,
-          fetchedAt: Date.now(),
-          groups: [],
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
+      codexPromises.push(
+        (async (): Promise<ProviderUsageReport> => {
+          try {
+            const token = await balancer.ensureFreshToken(acc);
+            const report = await fetchCodexUsage({
+              accessToken: token,
+              accountId: acc.accountId,
+              email: label,
+              refreshToken: acc.refresh,
+              signal,
+            });
+            report.isSessionAccount = isSession;
+            report.accountId = acc.id;
+            QuotaManager.getInstance().setReport(acc.id, report);
+            return report;
+          } catch (err) {
+            return {
+              providerId: "openai-codex",
+              providerName: "OpenAI Codex",
+              accountEmail: label,
+              accountId: acc.id,
+              isSessionAccount: isSession,
+              planType: acc.planType,
+              fetchedAt: Date.now(),
+              groups: [],
+              error: err instanceof Error ? err.message : String(err),
+            };
+          }
+        })()
+      );
     }
   } else {
     // Fallback to auth.json
     const authMap = loadConfiguredAuth();
     const codex = authMap["openai-codex"];
     if (codex?.access) {
-      const report = await fetchCodexUsage({
-        accessToken: codex.access,
-        accountId: codex.accountId,
-        email: codex.email,
-        refreshToken: codex.refresh,
-        signal,
-      });
-      report.isSessionAccount = true;
-      reports.push(report);
+      codexPromises.push(
+        (async (): Promise<ProviderUsageReport> => {
+          const report = await fetchCodexUsage({
+            accessToken: codex.access!,
+            accountId: codex.accountId,
+            email: codex.email,
+            refreshToken: codex.refresh,
+            signal,
+          });
+          report.isSessionAccount = true;
+          return report;
+        })()
+      );
+    }
+  }
+
+  // Await all provider account queries concurrently
+  const settled = await Promise.allSettled([...antigravityPromises, ...codexPromises]);
+  for (const s of settled) {
+    if (s.status === "fulfilled") {
+      reports.push(s.value);
     }
   }
 
