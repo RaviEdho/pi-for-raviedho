@@ -25,7 +25,7 @@ Personalized Pi extension package providing the **Google Antigravity** provider 
 ### 1. Install Extension Globally
 
 ```bash
-pi install .
+pi install git:github.com/RaviEdho/pi-for-raviedho
 ```
 
 Verify installed packages:
