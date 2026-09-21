@@ -20,7 +20,7 @@ Personalized Pi extension package providing the **Google Antigravity** provider 
 - **Thinking & Reasoning Support**: Discrete effort-tier routing and thinking budget configuration.
 - **Dynamic OpenAI Codex Plan Filtering**: Automatically detects your ChatGPT plan tier (`free`, `plus`, `pro`) from your OAuth token, queries OpenAI's live model endpoint, and filters out unavailable models from `/model` and `pi --list-models`.
 - **Multi-Account Support & Auto-Failover**: Pool multiple accounts per provider (Google Antigravity, OpenAI Codex, etc.) with deterministic session affinity for optimal prompt caching, automatic OAuth token refresh, and transparent failover on 429 / quota exhaustion.
-- **Oh My Pi (OMP) Automatic Sync**: Automatically discovers and imports authenticated accounts from `~/.omp/agent/agent.db` and syncs the active account to `~/.pi/agent/auth.json`.
+- **Pi Auth Sync**: Automatically imports credentials from `~/.pi/agent/auth.json` into the accounts pool and syncs the active healthy account back to `auth.json`.
 
 ## Usage
 

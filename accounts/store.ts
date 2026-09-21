@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -11,21 +10,16 @@ export class AccountStore {
   private static instance?: AccountStore;
   private filePath: string;
   private piAuthPath: string;
-  private ompDbPath: string;
-  private ompDbWalPath: string;
   private data: AccountStoreData;
   private lastMtimes = {
     accounts: 0,
     auth: 0,
-    ompDb: 0,
   };
   private lastCheckTime = 0;
 
   private constructor(filePath?: string) {
     this.filePath = filePath || join(homedir(), ".pi/agent/accounts.json");
     this.piAuthPath = join(homedir(), ".pi/agent/auth.json");
-    this.ompDbPath = join(homedir(), ".omp/agent/agent.db");
-    this.ompDbWalPath = join(homedir(), ".omp/agent/agent.db-wal");
     this.data = {
       version: STORE_VERSION,
       activeAccounts: {},
@@ -74,10 +68,6 @@ export class AccountStore {
     this.lastMtimes = {
       accounts: this.getFileMtime(this.filePath),
       auth: this.getFileMtime(this.piAuthPath),
-      ompDb: Math.max(
-        this.getFileMtime(this.ompDbPath),
-        this.getFileMtime(this.ompDbWalPath)
-      ),
     };
   }
 
@@ -124,7 +114,7 @@ export class AccountStore {
   }
 
   /**
-   * Forces a full synchronization from accounts.json, auth.json, and agent.db.
+   * Forces a full synchronization from accounts.json and auth.json.
    */
   public sync(): void {
     this.load();
@@ -135,7 +125,7 @@ export class AccountStore {
 
   /**
    * Checks file modification timestamps on disk and automatically reloads/imports
-   * if accounts.json, auth.json, or agent.db has been modified externally.
+   * if accounts.json or auth.json has been modified externally.
    */
   public reloadIfModified(force = false): boolean {
     const now = Date.now();
@@ -146,10 +136,6 @@ export class AccountStore {
 
     const accountsMtime = this.getFileMtime(this.filePath);
     const authMtime = this.getFileMtime(this.piAuthPath);
-    const ompDbMtime = Math.max(
-      this.getFileMtime(this.ompDbPath),
-      this.getFileMtime(this.ompDbWalPath)
-    );
 
     let needsLoad = false;
     let needsImport = false;
@@ -159,10 +145,9 @@ export class AccountStore {
       this.lastMtimes.accounts = accountsMtime;
     }
 
-    if (authMtime > this.lastMtimes.auth || ompDbMtime > this.lastMtimes.ompDb) {
+    if (authMtime > this.lastMtimes.auth) {
       needsImport = true;
       this.lastMtimes.auth = authMtime;
-      this.lastMtimes.ompDb = ompDbMtime;
     }
 
     if (needsLoad) {
@@ -217,6 +202,26 @@ export class AccountStore {
         currentAuth = {};
       }
     }
+    const existingAuth = currentAuth[provider] as Record<string, unknown> | undefined;
+    if (existingAuth) {
+      if (
+        active.type === "oauth" &&
+        existingAuth.type === "oauth" &&
+        existingAuth.access === active.access &&
+        existingAuth.refresh === active.refresh &&
+        existingAuth.expires === active.expires &&
+        existingAuth.projectId === active.projectId
+      ) {
+        return;
+      }
+      if (
+        active.type === "api_key" &&
+        existingAuth.type === "api_key" &&
+        existingAuth.key === active.apiKey
+      ) {
+        return;
+      }
+    }
 
     if (active.type === "oauth") {
       currentAuth[provider] = {
@@ -258,7 +263,7 @@ export class AccountStore {
 
   /**
    * Automatically discovers and imports credentials from ~/.pi/agent/auth.json
-   * and ~/.omp/agent/agent.db into the accounts store without overwriting newer state.
+   * into the accounts store without overwriting newer state.
    */
   public autoImportFromSources(): void {
     let modified = false;
@@ -317,7 +322,7 @@ export class AccountStore {
       return undefined;
     };
 
-    // 1. Check ~/.pi/agent/auth.json
+    // Check ~/.pi/agent/auth.json
     const piAuthPath = this.piAuthPath;
     if (existsSync(piAuthPath)) {
       try {
@@ -389,130 +394,14 @@ export class AccountStore {
       }
     }
 
-    // 2. Check ~/.omp/agent/agent.db (SQLite database from Oh My Pi)
-    const ompDbPath = this.ompDbPath;
-    if (existsSync(ompDbPath)) {
-      try {
-        const query =
-          "SELECT provider, credential_type, data, disabled_cause, updated_at FROM auth_credentials;";
-        const raw = execFileSync("sqlite3", ["-cmd", ".timeout 2000", ompDbPath, query], {
-          encoding: "utf-8",
-        }).trim();
-
-        if (raw) {
-          const lines = raw.split("\n");
-          for (const line of lines) {
-            const parts = line.split("|");
-            if (parts.length < 3) continue;
-            const provider = parts[0].trim();
-            if (!SUPPORTED_PROVIDERS.has(provider)) continue;
-
-            const credType = parts[1].trim();
-            let dataJson: string;
-            let disabledCause: string | null = null;
-            let ompUpdatedAtSec = 0;
-
-            if (parts.length >= 5) {
-              dataJson = parts.slice(2, parts.length - 2).join("|");
-              disabledCause = parts[parts.length - 2]?.trim() || null;
-              ompUpdatedAtSec = parseInt(parts[parts.length - 1]?.trim(), 10) || 0;
-            } else if (parts.length === 4) {
-              dataJson = parts[2];
-              disabledCause = parts[3]?.trim() || null;
-            } else {
-              dataJson = parts[2];
-            }
-
-            try {
-              const parsedData = JSON.parse(dataJson);
-              const access = typeof parsedData.access === "string" ? parsedData.access : undefined;
-              const refresh = typeof parsedData.refresh === "string" ? parsedData.refresh : undefined;
-              const email =
-                (typeof parsedData.email === "string" ? parsedData.email : undefined) ||
-                extractEmailFromJwt(access);
-              const accountId =
-                (typeof parsedData.accountId === "string" ? parsedData.accountId : undefined) ||
-                extractAccountIdFromJwt(access);
-              const projectId =
-                typeof parsedData.projectId === "string" ? parsedData.projectId : undefined;
-              const orgId = typeof parsedData.orgId === "string" ? parsedData.orgId : undefined;
-              const orgName =
-                typeof parsedData.orgName === "string" ? parsedData.orgName : undefined;
-              const tokenSuffix = refresh ? `token-${refresh.slice(-8)}` : access ? `tok-${access.slice(-8)}` : undefined;
-              const identity = email || accountId || (projectId && projectId !== "aicode-consumers" ? projectId : undefined) || tokenSuffix || "omp-default";
-              const id = AccountStore.generateAccountId(provider, identity);
-
-              const existing = findExisting(provider, email, accountId, id, refresh);
-              const cleanDisabledCause = disabledCause ? disabledCause.trim() : null;
-              const ompExpires = typeof parsedData.expires === "number" ? parsedData.expires : undefined;
-              const ompUpdatedAtMs = ompUpdatedAtSec > 0
-                ? (ompUpdatedAtSec > 1e11 ? ompUpdatedAtSec : ompUpdatedAtSec * 1000)
-                : (parsedData.authorizedAt || 0);
-
-              if (!existing) {
-                const account: AccountCredential = {
-                  id,
-                  provider,
-                  type: credType === "oauth" ? "oauth" : "api_key",
-                  email,
-                  accountId,
-                  projectId,
-                  orgId,
-                  orgName,
-                  access,
-                  refresh,
-                  expires: ompExpires,
-                  apiKey: typeof parsedData.apiKey === "string" ? parsedData.apiKey : undefined,
-                  disabledCause: cleanDisabledCause,
-                  createdAt: parsedData.authorizedAt || Date.now(),
-                  updatedAt: ompUpdatedAtMs || Date.now(),
-                };
-                this.data.accounts.push(account);
-                if (!this.data.activeAccounts[provider]) {
-                  this.data.activeAccounts[provider] = account.id;
-                }
-                modified = true;
-              } else {
-                if (email && !existing.email) existing.email = email;
-                if (accountId && !existing.accountId) existing.accountId = accountId;
-                if (projectId && !existing.projectId) existing.projectId = projectId;
-                if (orgId && !existing.orgId) existing.orgId = orgId;
-                if (orgName && !existing.orgName) existing.orgName = orgName;
-
-                // Only overwrite existing token if existing has no access token, or incoming OMP token is strictly newer
-                let isOmpNewer = false;
-                if (!existing.access) {
-                  isOmpNewer = true;
-                } else if (ompExpires && existing.expires) {
-                  isOmpNewer = ompExpires > existing.expires;
-                } else if (ompUpdatedAtMs && existing.updatedAt) {
-                  isOmpNewer = ompUpdatedAtMs > existing.updatedAt;
-                }
-
-                if (isOmpNewer && parsedData.access && existing.access !== parsedData.access) {
-                  existing.access = parsedData.access;
-                  if (refresh) existing.refresh = refresh;
-                  if (ompExpires) existing.expires = ompExpires;
-                  existing.updatedAt = ompUpdatedAtMs || Date.now();
-                  modified = true;
-                }
-                if (cleanDisabledCause && existing.disabledCause !== cleanDisabledCause) {
-                  existing.disabledCause = cleanDisabledCause;
-                  modified = true;
-                }
-              }
-            } catch {
-              // Ignore single row parsing error
-            }
-          }
-        }
-      } catch {
-        // Non-fatal if sqlite3 or table not accessible
-      }
-    }
-
     if (modified) {
       this.save();
+    }
+
+    for (const provider of SUPPORTED_PROVIDERS) {
+      if (this.data.activeAccounts[provider]) {
+        this.syncActiveToPiAuth(provider);
+      }
     }
   }
 

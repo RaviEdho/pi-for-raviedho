@@ -22,7 +22,7 @@ import { registerCodexFilter } from "./codex-filter/index.js";
 import { registerUsageCommand } from "./usage/index.js";
 
 export default async function (pi: ExtensionAPI) {
-  // Initialize multi-account store and auto-discover accounts from omp and Pi stores
+  // Initialize multi-account store and sync credentials from Pi auth store
   const store = AccountStore.getInstance();
   const balancer = AccountBalancer.getInstance();
 
