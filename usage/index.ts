@@ -236,36 +236,79 @@ export async function collectUsageReports(
 }
 
 /**
- * Renders the usage breakdown in a full TUI dialog.
+ * Renders the usage breakdown in a full TUI dialog, displaying in-modal loading state without polluting scrollback.
  */
-async function showUsageTui(
-  reports: ProviderUsageReport[],
-  sessionInfo: SessionUsageInfo | undefined,
-  ctx: ExtensionCommandContext
-): Promise<void> {
-  const formatted = formatUsageText(reports, { sessionInfo });
+async function showUsageTui(ctx: ExtensionCommandContext): Promise<void> {
+  const sessionId = ctx.sessionManager?.getSessionId?.();
+  const currentModel = ctx.model;
+  const currentProvider = currentModel?.provider;
+  const currentModelId = currentModel ? `${currentModel.provider}/${currentModel.id}` : undefined;
 
-  await ctx.ui.custom<void>((_tui, theme, _kb, done) => {
-    const container = new Container();
-    const border = new DynamicBorder((s: string) => theme.fg("accent", s));
+  const abortController = new AbortController();
 
-    container.addChild(border);
-    container.addChild(new Text(theme.fg("accent", theme.bold("  Provider Usage & Quotas")), 1, 0));
-    container.addChild(new Text("", 0, 0));
+  await ctx.ui.custom<void>((tui, theme, _kb, done) => {
+    let loading = true;
+    let errorMsg: string | undefined;
+    let reports: ProviderUsageReport[] = [];
+    let sessionInfo: SessionUsageInfo | undefined;
 
-    for (const line of formatted.split("\n")) {
-      container.addChild(new Text(`  ${line}`, 0, 0));
-    }
-
-    container.addChild(new Text("", 0, 0));
-    container.addChild(new Text(theme.fg("dim", "  Press Enter, Esc, or q to close"), 1, 0));
-    container.addChild(border);
+    collectUsageReports({
+      signal: abortController.signal,
+      sessionId,
+      currentProvider,
+      currentModelId,
+    })
+      .then((res) => {
+        loading = false;
+        reports = res.reports;
+        sessionInfo = res.sessionInfo;
+        tui.requestRender();
+      })
+      .catch((err) => {
+        if (!abortController.signal.aborted) {
+          loading = false;
+          errorMsg = err instanceof Error ? err.message : String(err);
+          tui.requestRender();
+        }
+      });
 
     return {
-      render: (width: number) => container.render(width),
-      invalidate: () => container.invalidate(),
+      render: (width: number) => {
+        const container = new Container();
+        const border = new DynamicBorder((s: string) => theme.fg("accent", s));
+
+        container.addChild(border);
+        container.addChild(new Text(theme.fg("accent", theme.bold("  Provider Usage & Quotas")), 1, 0));
+        container.addChild(new Text("", 0, 0));
+
+        if (loading) {
+          container.addChild(new Text(theme.fg("dim", "  ⏳ Fetching provider quotas..."), 1, 0));
+          container.addChild(new Text("", 0, 0));
+          container.addChild(new Text(theme.fg("dim", "  Press Esc or q to cancel"), 1, 0));
+        } else if (errorMsg) {
+          container.addChild(new Text(theme.fg("error", `  Failed to fetch usage: ${errorMsg}`), 1, 0));
+          container.addChild(new Text("", 0, 0));
+          container.addChild(new Text(theme.fg("dim", "  Press Enter, Esc, or q to close"), 1, 0));
+        } else if (reports.length === 0) {
+          container.addChild(new Text(theme.fg("warning", "  No active provider accounts found to report usage for."), 1, 0));
+          container.addChild(new Text("", 0, 0));
+          container.addChild(new Text(theme.fg("dim", "  Press Enter, Esc, or q to close"), 1, 0));
+        } else {
+          const formatted = formatUsageText(reports, { sessionInfo });
+          for (const line of formatted.split("\n")) {
+            container.addChild(new Text(`  ${line}`, 0, 0));
+          }
+          container.addChild(new Text("", 0, 0));
+          container.addChild(new Text(theme.fg("dim", "  Press Enter, Esc, or q to close"), 1, 0));
+        }
+
+        container.addChild(border);
+        return container.render(width);
+      },
+      invalidate: () => {},
       handleInput: (data: string) => {
         if (matchesKey(data, "enter") || matchesKey(data, "escape") || data === "q") {
+          abortController.abort();
           done(undefined);
           return true;
         }
@@ -282,40 +325,31 @@ export function registerUsageCommand(pi: ExtensionAPI): void {
   pi.registerCommand("usage", {
     description: "Display provider quota and rate limit status across all configured accounts",
     handler: async (_args, ctx) => {
-      let result: CollectUsageResult;
-
-      if (ctx.hasUI) {
-        ctx.ui.notify("Fetching provider quota usage...", "info");
-      }
-
-      const sessionId = ctx.sessionManager?.getSessionId?.();
-      const currentModel = ctx.model;
-      const currentProvider = currentModel?.provider;
-      const currentModelId = currentModel ? `${currentModel.provider}/${currentModel.id}` : undefined;
-
-      try {
-        result = await collectUsageReports({
-          signal: ctx.signal,
-          sessionId,
-          currentProvider,
-          currentModelId,
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        ctx.ui.notify(`Failed to fetch usage reports: ${msg}`, "error");
-        return;
-      }
-
-      if (result.reports.length === 0) {
-        ctx.ui.notify("No active provider accounts found to report usage for.", "warning");
-        return;
-      }
-
       if (ctx.hasUI && ctx.mode === "tui") {
-        await showUsageTui(result.reports, result.sessionInfo, ctx);
+        await showUsageTui(ctx);
       } else {
-        const text = formatUsageText(result.reports, { sessionInfo: result.sessionInfo });
-        console.log(text);
+        const sessionId = ctx.sessionManager?.getSessionId?.();
+        const currentModel = ctx.model;
+        const currentProvider = currentModel?.provider;
+        const currentModelId = currentModel ? `${currentModel.provider}/${currentModel.id}` : undefined;
+
+        try {
+          const result = await collectUsageReports({
+            signal: ctx.signal,
+            sessionId,
+            currentProvider,
+            currentModelId,
+          });
+          if (result.reports.length === 0) {
+            console.log("No active provider accounts found to report usage for.");
+            return;
+          }
+          const text = formatUsageText(result.reports, { sessionInfo: result.sessionInfo });
+          console.log(text);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`Failed to fetch usage reports: ${msg}`);
+        }
       }
     },
   });
