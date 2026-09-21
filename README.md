@@ -62,5 +62,5 @@ pi --model google-antigravity/gemini-2.5-flash -p "Summarize git status"
 npm run typecheck
 
 # Test directly without installing
-pi -e ./extensions/index.ts --model google-antigravity/gemini-2.5-flash -p "hello"
+pi -e ./pi-for-raviedho/index.ts --model google-antigravity/gemini-2.5-flash -p "hello"
 ```

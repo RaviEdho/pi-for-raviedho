@@ -14,16 +14,10 @@ import {
   type StopReason,
   type TextContent,
   type ThinkingContent,
+  type Tool,
   type ToolCall,
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
-import {
-  convertMessages,
-  convertTools,
-  isThinkingPart,
-  mapStopReasonString,
-  retainThoughtSignature,
-} from "@earendil-works/pi-ai/api/google-shared";
 import {
   ANTIGRAVITY_PRIMARY_ENDPOINT,
   ANTIGRAVITY_WIRE_PROFILES,
@@ -59,6 +53,132 @@ function deriveSignedDecimalSessionId(text: string): string {
     value = (value << 8n) | BigInt(digest[index] ?? 0);
   }
   return `-${(value & INT63_MASK).toString()}`;
+}
+function isThinkingPart(part: { thought?: boolean }): boolean {
+  return part.thought === true;
+}
+
+function retainThoughtSignature(existing?: string, incoming?: string): string | undefined {
+  return typeof incoming === "string" && incoming.length > 0 ? incoming : existing;
+}
+
+function mapStopReasonString(reason: string): "stop" | "length" | "error" {
+  switch (reason) {
+    case "STOP":
+      return "stop";
+    case "MAX_TOKENS":
+      return "length";
+    default:
+      return "error";
+  }
+}
+
+function convertMessagesToGemini(transcript: TranscriptContext): Record<string, unknown>[] {
+  const contents: Record<string, unknown>[] = [];
+
+  for (const msg of transcript.messages) {
+    if (msg.role === "user") {
+      if (typeof msg.content === "string") {
+        contents.push({
+          role: "user",
+          parts: [{ text: msg.content }],
+        });
+      } else {
+        const parts = msg.content.map((item) => {
+          if (item.type === "text") {
+            return { text: item.text };
+          }
+          return {
+            inlineData: {
+              mimeType: item.mimeType,
+              data: item.data,
+            },
+          };
+        });
+        if (parts.length > 0) {
+          contents.push({ role: "user", parts });
+        }
+      }
+    } else if (msg.role === "assistant") {
+      const parts: Record<string, unknown>[] = [];
+      for (const block of msg.content) {
+        if (block.type === "text") {
+          if (block.text && block.text.trim()) {
+            parts.push({
+              text: block.text,
+              ...(block.textSignature ? { thoughtSignature: block.textSignature } : {}),
+            });
+          }
+        } else if (block.type === "thinking") {
+          if (block.thinking && block.thinking.trim()) {
+            parts.push({
+              thought: true,
+              text: block.thinking,
+              ...(block.thinkingSignature ? { thoughtSignature: block.thinkingSignature } : {}),
+            });
+          }
+        } else if (block.type === "toolCall") {
+          parts.push({
+            functionCall: {
+              name: block.name,
+              args: block.arguments ?? {},
+              id: block.id,
+            },
+            ...(block.thoughtSignature ? { thoughtSignature: block.thoughtSignature } : {}),
+          });
+        }
+      }
+      if (parts.length > 0) {
+        contents.push({ role: "model", parts });
+      }
+    } else if (msg.role === "toolResult") {
+      const textContent = msg.content.filter((c) => c.type === "text");
+      const textResult = textContent.map((c) => c.text).join("\n");
+      const functionResponsePart = {
+        functionResponse: {
+          name: msg.toolName,
+          response: msg.isError ? { error: textResult } : { output: textResult },
+          ...(msg.toolCallId ? { id: msg.toolCallId } : {}),
+        },
+      };
+
+      const lastContent = contents[contents.length - 1];
+      if (
+        lastContent &&
+        lastContent.role === "user" &&
+        Array.isArray(lastContent.parts) &&
+        lastContent.parts.some((p: Record<string, unknown>) => p.functionResponse)
+      ) {
+        lastContent.parts.push(functionResponsePart);
+      } else {
+        contents.push({
+          role: "user",
+          parts: [functionResponsePart],
+        });
+      }
+    }
+  }
+
+  return contents;
+}
+
+function normalizeAntigravityTools(
+  tools: Tool[],
+  isClaude: boolean
+): Array<{ functionDeclarations: Record<string, unknown>[] }> | undefined {
+  if (tools.length === 0) return undefined;
+  return [
+    {
+      functionDeclarations: tools.map((tool) => {
+        const cleaned = cleanSchema(tool.parameters);
+        return {
+          name: tool.name,
+          description: tool.description,
+          ...(isClaude ? { parameters: cleaned } : { parametersJsonSchema: cleaned }),
+        };
+      }),
+    },
+  ];
 }
 
 function resolveWireModelId(modelId: string, thinkingEnabled: boolean): string {
@@ -124,30 +244,6 @@ function cleanSchema(schema: unknown): unknown {
   return copy;
 }
 
-function normalizeAntigravityTools(
-  tools: Array<{ functionDeclarations: Record<string, unknown>[] }> | undefined,
-  isClaude: boolean
-): Array<{ functionDeclarations: Record<string, unknown>[] }> | undefined {
-  if (!tools) return undefined;
-  return tools.map((toolGroup) => ({
-    ...toolGroup,
-    functionDeclarations: toolGroup.functionDeclarations.map((decl) => {
-      const rawSchema = decl.parameters ?? decl.parametersJsonSchema;
-      const cleaned = cleanSchema(rawSchema);
-      if (isClaude) {
-        const { parametersJsonSchema: _unused, ...rest } = decl;
-        return {
-          ...rest,
-          parameters: cleaned,
-        };
-      }
-      return {
-        ...decl,
-        ...(decl.parameters ? { parameters: cleaned } : { parametersJsonSchema: cleaned }),
-      };
-    }),
-  }));
-}
 
 /**
  * Parses an SSE text stream into structured JSON events.
@@ -261,12 +357,9 @@ export function streamAntigravity(
         labels.model_enum = wireProfile.modelEnum;
       }
 
-      // Convert messages to Gemini format (type cast for Google compatibility helper)
-      const contents = convertMessages(model as unknown as Model<"google-generative-ai">, transcript);
-
-      // Convert tools using OpenAPI 3.0 parameters for Cloud Code Assist compatibility
-      const baseTools = tools.length > 0 ? convertTools(tools, isClaude) : undefined;
-      const convertedTools = normalizeAntigravityTools(baseTools, isClaude);
+      // Convert messages and tools to Cloud Code Assist format
+      const contents = convertMessagesToGemini(transcript);
+      const convertedTools = normalizeAntigravityTools(tools, isClaude);
       const generationConfig: Record<string, unknown> = {
         maxOutputTokens: wireProfile?.maxOutputTokens ?? (isClaude ? 64000 : 65535),
       };
