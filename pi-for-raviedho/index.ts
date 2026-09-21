@@ -9,7 +9,10 @@ import {
   PROVIDER_ID,
   PROVIDER_NAME,
 } from "./antigravity/constants.js";
-import { DEFAULT_ANTIGRAVITY_MODELS, fetchAntigravityModels } from "./antigravity/models.js";
+import {
+  DEFAULT_ANTIGRAVITY_MODELS,
+  fetchAndCollapseAntigravityModels,
+} from "./antigravity/models.js";
 import {
   getAntigravityApiKey,
   loginAntigravity,
@@ -17,11 +20,11 @@ import {
 } from "./antigravity/oauth.js";
 import { streamAntigravity } from "./antigravity/stream.js";
 
-function syncOmpAuthIfMissing(): void {
+function syncOmpAuthAndGetToken(): string | undefined {
+  let token = process.env.ANTIGRAVITY_API_KEY;
   try {
     const home = homedir();
     const piAuthPath = join(home, ".pi/agent/auth.json");
-    let hasAntigravity = false;
     let existingJson: Record<string, unknown> = {};
 
     if (existsSync(piAuthPath)) {
@@ -29,8 +32,14 @@ function syncOmpAuthIfMissing(): void {
         const parsed = JSON.parse(readFileSync(piAuthPath, "utf-8"));
         if (parsed && typeof parsed === "object") {
           existingJson = parsed as Record<string, unknown>;
-          if (existingJson["google-antigravity"]) {
-            hasAntigravity = true;
+          const antigravityCred = existingJson["google-antigravity"];
+          if (
+            antigravityCred &&
+            typeof antigravityCred === "object" &&
+            "access" in antigravityCred &&
+            typeof antigravityCred.access === "string"
+          ) {
+            token = token || antigravityCred.access;
           }
         }
       } catch {
@@ -38,7 +47,7 @@ function syncOmpAuthIfMissing(): void {
       }
     }
 
-    if (!hasAntigravity) {
+    if (!token) {
       const ompDbPath = join(home, ".omp/agent/agent.db");
       if (existsSync(ompDbPath)) {
         const raw = execFileSync(
@@ -61,38 +70,51 @@ function syncOmpAuthIfMissing(): void {
             email: parsed.email,
           };
           writeFileSync(piAuthPath, JSON.stringify(existingJson, null, 2), "utf-8");
+          token = parsed.access;
         }
       }
     }
   } catch {
     // Non-fatal if sync is unavailable
   }
+  return token;
 }
 
-export default function (pi: ExtensionAPI) {
-  // Sync existing OAuth credentials from omp if ~/.pi/agent/auth.json lacks them
-  syncOmpAuthIfMissing();
+export default async function (pi: ExtensionAPI) {
+  // Sync existing OAuth credentials from omp and retrieve token
+  const token = syncOmpAuthAndGetToken();
+
+  // Dynamically fetch and collapse live models from Google if token is available
+  let models = DEFAULT_ANTIGRAVITY_MODELS;
+  if (token) {
+    try {
+      const dynamicModels = await fetchAndCollapseAntigravityModels(token);
+      if (dynamicModels && dynamicModels.length > 0) {
+        models = dynamicModels;
+      }
+    } catch {
+      // Keep defaults on network failure
+    }
+  }
 
   // Register Google Antigravity provider with full OAuth and Cloud Code Assist streaming support
   pi.registerProvider(PROVIDER_ID, {
     name: PROVIDER_NAME,
     baseUrl: ANTIGRAVITY_PRIMARY_ENDPOINT,
     apiKey: "$ANTIGRAVITY_API_KEY",
-    // Custom streaming API identifier cast through Api domain type
     api: "google-antigravity-api" as unknown as Api,
 
-    models: DEFAULT_ANTIGRAVITY_MODELS,
+    models,
 
     async refreshModels(context) {
-      // If an API key or OAuth token is available, discover live models
-      const apiKey = context?.signal ? process.env.ANTIGRAVITY_API_KEY : undefined;
-      if (apiKey) {
-        const dynamicModels = await fetchAntigravityModels(apiKey, context.signal);
-        if (dynamicModels && dynamicModels.length > 0) {
-          return dynamicModels;
+      const activeToken = syncOmpAuthAndGetToken();
+      if (activeToken) {
+        const liveModels = await fetchAndCollapseAntigravityModels(activeToken, context?.signal);
+        if (liveModels && liveModels.length > 0) {
+          return liveModels;
         }
       }
-      return DEFAULT_ANTIGRAVITY_MODELS;
+      return models;
     },
 
     oauth: {

@@ -182,14 +182,27 @@ function normalizeAntigravityTools(
 }
 
 function resolveWireModelId(modelId: string, thinkingEnabled: boolean): string {
-  if (modelId === "gemini-3.1-pro") {
-    return thinkingEnabled ? "gemini-pro-agent" : "gemini-3.1-pro-low";
+  // Flash revisions (e.g. gemini-3.8-flash, gemini-3.7-flash, gemini-3.6-flash)
+  if (/^gemini-3\.[6-9]-flash$/.test(modelId)) {
+    return thinkingEnabled ? `${modelId}-medium` : `${modelId}-low`;
   }
   if (modelId === "gemini-3.5-flash") {
     return thinkingEnabled ? "gemini-3-flash-agent" : "gemini-3.5-flash-extra-low";
   }
+  if (modelId === "gemini-3.1-pro") {
+    return thinkingEnabled ? "gemini-pro-agent" : "gemini-3.1-pro-low";
+  }
   if (modelId === "claude-opus-4-6") {
     return "claude-opus-4-6-thinking";
+  }
+  if (modelId === "claude-sonnet-4-6") {
+    return "claude-sonnet-4-6";
+  }
+  if (modelId === "gpt-oss-120b") {
+    return "gpt-oss-120b-medium";
+  }
+  if (modelId === "gemini-2.5-flash") {
+    return thinkingEnabled ? "gemini-2.5-flash-thinking" : "gemini-2.5-flash";
   }
   if (modelId === "claude-sonnet-4-5") {
     return thinkingEnabled ? "claude-sonnet-4-5-thinking" : "claude-sonnet-4-5";
@@ -361,7 +374,9 @@ export function streamAntigravity(
       const contents = convertMessagesToGemini(transcript);
       const convertedTools = normalizeAntigravityTools(tools, isClaude);
       const generationConfig: Record<string, unknown> = {
-        maxOutputTokens: wireProfile?.maxOutputTokens ?? (isClaude ? 64000 : 65535),
+        maxOutputTokens:
+          wireProfile?.maxOutputTokens ??
+          (isClaude ? 64000 : model.id.startsWith("gpt-oss") ? 8192 : 65535),
       };
       if (options?.temperature !== undefined) {
         generationConfig.temperature = options.temperature;
