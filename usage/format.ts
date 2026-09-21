@@ -18,13 +18,54 @@ export function formatRelativeTime(isoString?: string, now = Date.now()): string
 }
 
 /**
- * Creates a block progress bar like ████████████░░░░░░░░░░░░░░░░.
+ * Computes the fraction of time elapsed in the current rate limit window (0.0 to 1.0).
  */
-export function makeProgressBar(usedFraction: number, width = 28): string {
-  const clamped = Math.max(0, Math.min(1, usedFraction));
-  const filled = Math.round(clamped * width);
-  const empty = width - filled;
-  return "█".repeat(filled) + "░".repeat(empty);
+export function computeTimeElapsedFraction(
+  resetTimeIso?: string,
+  windowSeconds?: number,
+  now = Date.now()
+): number | undefined {
+  if (!resetTimeIso || !windowSeconds || windowSeconds <= 0) return undefined;
+  const resetMs = new Date(resetTimeIso).getTime();
+  if (Number.isNaN(resetMs)) return undefined;
+  const remainingMs = resetMs - now;
+  const windowMs = windowSeconds * 1000;
+  // Clamp remaining time to [0, windowMs] to protect against slight clock skews
+  const clampedRemainingMs = Math.max(0, Math.min(windowMs, remainingMs));
+  const elapsedMs = windowMs - clampedRemainingMs;
+  return Math.max(0, Math.min(1, elapsedMs / windowMs));
+}
+
+/**
+ * Creates a block progress bar like ████████░░░░┃░░░░░░░░░░░░░
+ * with a bold vertical bar ┃ indicating current time/reset cycle progress.
+ */
+export function makeProgressBar(
+  usedFraction: number,
+  width = 28,
+  timeElapsedFraction?: number
+): string {
+  const clampedUsed = Math.max(0, Math.min(1, usedFraction));
+  const usedSlots = Math.round(clampedUsed * width);
+
+  let markerIndex: number | undefined;
+  if (timeElapsedFraction !== undefined && !Number.isNaN(timeElapsedFraction)) {
+    const clampedTime = Math.max(0, Math.min(1, timeElapsedFraction));
+    markerIndex = Math.min(width - 1, Math.max(0, Math.floor(clampedTime * width)));
+  }
+
+  let bar = "";
+  for (let i = 0; i < width; i++) {
+    if (markerIndex !== undefined && i === markerIndex) {
+      bar += "┃";
+    } else if (i < usedSlots) {
+      bar += "█";
+    } else {
+      bar += "░";
+    }
+  }
+
+  return bar;
 }
 
 /**
@@ -108,7 +149,8 @@ export function formatUsageText(
 
       for (const bucket of allBuckets) {
         const label = `● ${bucket.displayName}`.padEnd(labelWidth, " ");
-        const bar = makeProgressBar(bucket.usedFraction, 28);
+        const timeElapsed = computeTimeElapsedFraction(bucket.resetTime, bucket.windowSeconds, now);
+        const bar = makeProgressBar(bucket.usedFraction, 28, timeElapsed);
         const percentStr = `${(bucket.usedFraction * 100).toFixed(1)}% used`.padStart(10, " ");
         const resetStr = bucket.resetTime ? ` · resets in ${formatRelativeTime(bucket.resetTime, now)}` : "";
 

@@ -2,6 +2,7 @@ export interface QuotaBucket {
   bucketId: string;
   displayName: string;
   window: string;
+  windowSeconds?: number;
   remainingFraction: number;
   usedFraction: number;
   resetTime?: string;

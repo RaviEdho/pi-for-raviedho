@@ -113,12 +113,17 @@ export async function fetchAntigravityUsage(
         const usedFraction = Math.max(0, Math.min(1, 1 - remainingFraction));
         const window = (b.window ?? "").toLowerCase();
 
+        let windowSeconds: number | undefined;
         if (window.includes("5h") || b.bucketId?.includes("5h")) {
           has5h = true;
           min5hRemaining = Math.min(min5hRemaining, remainingFraction);
+          windowSeconds = 5 * 3600;
         } else if (window.includes("week") || b.bucketId?.includes("weekly")) {
           hasWeekly = true;
           minWeeklyRemaining = Math.min(minWeeklyRemaining, remainingFraction);
+          windowSeconds = 7 * 86400;
+        } else if (window.includes("day") || b.bucketId?.includes("day")) {
+          windowSeconds = 86400;
         }
 
         let displayName = b.displayName ?? b.bucketId ?? "Quota";
@@ -131,6 +136,7 @@ export async function fetchAntigravityUsage(
           bucketId: b.bucketId ?? "default",
           displayName,
           window: b.window ?? "default",
+          windowSeconds,
           remainingFraction,
           usedFraction,
           resetTime: b.resetTime,
