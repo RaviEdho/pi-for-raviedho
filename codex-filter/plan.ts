@@ -1,4 +1,5 @@
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
+const JWT_PROFILE_PATH = "https://api.openai.com/profile";
 
 /**
  * Decodes the payload portion of a JWT string.
@@ -49,6 +50,24 @@ export function getCodexAccountId(accessToken: string | undefined): string | nul
     const id = (authClaim as Record<string, unknown>).chatgpt_account_id;
     if (typeof id === "string" && id.trim().length > 0) {
       return id.trim();
+    }
+  }
+  return null;
+}
+
+/**
+ * Extracts email from an OAuth access token profile claim.
+ */
+export function getCodexEmail(accessToken: string | undefined): string | null {
+  if (!accessToken) return null;
+  const payload = decodeJwtPayload(accessToken);
+  if (!payload) return null;
+
+  const profileClaim = payload[JWT_PROFILE_PATH];
+  if (profileClaim && typeof profileClaim === "object" && !Array.isArray(profileClaim)) {
+    const email = (profileClaim as Record<string, unknown>).email;
+    if (typeof email === "string" && email.trim().length > 0) {
+      return email.trim();
     }
   }
   return null;

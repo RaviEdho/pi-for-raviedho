@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Api, Credential, Model, Provider } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   DEFAULT_FALLBACK_FREE_MODELS,
   fetchLiveCodexCatalog,
@@ -34,7 +34,7 @@ function getStoredCodexCredential(): { access?: string; accountId?: string } | n
 }
 
 /**
- * Registers the OpenAI Codex dynamic plan filter provider and helper command.
+ * Registers the OpenAI Codex dynamic plan filter provider.
  */
 export function registerCodexFilter(pi: ExtensionAPI): void {
   const baseCodex = builtinProviders().find((p) => p.id === "openai-codex");
@@ -105,59 +105,4 @@ export function registerCodexFilter(pi: ExtensionAPI): void {
   };
 
   pi.registerProvider(filteredCodexProvider);
-
-  // Register command to inspect the current detected Codex tier and model availability
-  pi.registerCommand("codex-plan", {
-    description: "Check your OpenAI Codex account plan tier and model availability",
-    async handler(_args: string, ctx: ExtensionCommandContext) {
-      const cred = getStoredCodexCredential();
-      if (!cred?.access) {
-        ctx.ui.notify("No OpenAI Codex account logged in. Use /login openai-codex first.", "warning");
-        return;
-      }
-
-      const plan = getCodexPlanType(cred.access) || "unknown";
-      const accountId = cred.accountId || getCodexAccountId(cred.access) || "unknown";
-
-      let catalog = loadCachedCatalog();
-      if ((!catalog || catalog.length === 0) && cred.accountId) {
-        try {
-          catalog = await fetchLiveCodexCatalog(cred.access, cred.accountId);
-        } catch {
-          // Keep empty if failed
-        }
-      }
-
-      const lines: string[] = [];
-      lines.push(`Plan Tier:   ${plan.toUpperCase()}`);
-      lines.push(`Account ID:  ${accountId}`);
-      lines.push("");
-
-      if (catalog && catalog.length > 0) {
-        const available = catalog.filter((m) => m.availableInPlans.includes(plan));
-        const restricted = catalog.filter((m) => !m.availableInPlans.includes(plan));
-
-        lines.push(`Available in ${plan.toUpperCase()} tier (${available.length}):`);
-        for (const m of available) {
-          lines.push(`  ✓ ${m.slug.padEnd(20)} (${m.displayName})`);
-        }
-
-        if (restricted.length > 0) {
-          lines.push("");
-          lines.push(`Restricted models (requires upgrade to Plus/Pro):`);
-          for (const m of restricted) {
-            lines.push(`  ✗ ${m.slug.padEnd(20)} (${m.displayName})`);
-          }
-        }
-      } else {
-        lines.push("Live catalog could not be fetched. Using default free-tier whitelist.");
-      }
-
-      if (ctx.hasUI && ctx.mode === "tui") {
-        ctx.ui.notify(lines.join("\n"), "info");
-      } else {
-        console.log(lines.join("\n"));
-      }
-    },
-  });
 }

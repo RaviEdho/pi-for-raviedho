@@ -8,15 +8,19 @@ import type {
 import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import { Container, matchesKey, Text } from "@earendil-works/pi-tui";
 import { fetchAntigravityUsage } from "./antigravity.js";
+import { fetchCodexUsage } from "./codex.js";
 import { formatUsageText } from "./format.js";
 import type { ProviderUsageReport } from "./types.js";
 
 interface StoredAuthEntry {
   type?: string;
   access?: string;
+  refresh?: string;
+  expires?: number;
   key?: string;
   projectId?: string;
   email?: string;
+  accountId?: string;
 }
 
 /**
@@ -56,15 +60,25 @@ export async function collectUsageReports(signal?: AbortSignal): Promise<Provide
     reports.push(report);
   }
 
-  // 2. Openai Codex or others if present
+  // 2. OpenAI Codex
   const codex = authMap["openai-codex"];
-  if (codex && !reports.some((r) => r.providerId === "openai-codex")) {
+  if (codex?.access && !reports.some((r) => r.providerId === "openai-codex")) {
+    const report = await fetchCodexUsage({
+      accessToken: codex.access,
+      accountId: codex.accountId,
+      email: codex.email,
+      refreshToken: codex.refresh,
+      signal,
+    });
+    reports.push(report);
+  } else if (codex && !reports.some((r) => r.providerId === "openai-codex")) {
     reports.push({
       providerId: "openai-codex",
       providerName: "OpenAI Codex",
       accountEmail: codex.email,
       fetchedAt: Date.now(),
       groups: [],
+      error: "Missing access token",
     });
   }
 

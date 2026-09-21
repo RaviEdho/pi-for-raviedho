@@ -18,6 +18,8 @@ export interface ProviderUsageReport {
   providerId: string;
   providerName: string;
   accountEmail?: string;
+  planType?: string;
+  resetCredits?: number;
   fetchedAt: number;
   groups: QuotaGroup[];
   capacitySummary?: string;

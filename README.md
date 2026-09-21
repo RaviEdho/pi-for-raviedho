@@ -18,7 +18,7 @@ Personalized Pi extension package providing the **Google Antigravity** provider 
   - `gpt-oss-120b`
 - **Tool Calling**: Full support for tool calling with schema normalization for Claude models.
 - **Thinking & Reasoning Support**: Discrete effort-tier routing and thinking budget configuration.
-- **Dynamic OpenAI Codex Plan Filtering**: Automatically detects your ChatGPT plan tier (`free`, `plus`, `pro`) from your OAuth token, queries OpenAI's live model endpoint, and filters out unavailable models from `/model` and `pi --list-models`. Includes `/codex-plan` command.
+- **Dynamic OpenAI Codex Plan Filtering**: Automatically detects your ChatGPT plan tier (`free`, `plus`, `pro`) from your OAuth token, queries OpenAI's live model endpoint, and filters out unavailable models from `/model` and `pi --list-models`.
 
 ## Usage
 
@@ -65,12 +65,6 @@ Run `/usage` to view live quotas, progress bars, and reset times:
 
 # Or from terminal:
 pi -p "/usage"
-```
-
-### 5. Check Codex Plan and Model Tier
-
-```bash
-/codex-plan
 ```
 
 ## Development

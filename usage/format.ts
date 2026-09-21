@@ -46,8 +46,16 @@ export function formatUsageText(
 
   for (const report of reports) {
     lines.push(`${report.providerName} — 1 account`);
-    if (report.accountEmail) {
-      lines.push(`  ● ${report.accountEmail}`);
+    const accountLabel = report.accountEmail ?? (report.planType ? "OAuth account" : undefined);
+    if (accountLabel) {
+      let header = `  ● ${accountLabel}`;
+      if (report.planType) {
+        header += ` · plan: ${report.planType}`;
+      }
+      if (report.resetCredits && report.resetCredits > 0) {
+        header += ` · ✦ ${report.resetCredits} saved reset${report.resetCredits === 1 ? "" : "s"}`;
+      }
+      lines.push(header);
     }
 
     if (report.error) {
@@ -58,6 +66,12 @@ export function formatUsageText(
 
     // Collect all buckets to determine column alignment
     const allBuckets = report.groups.flatMap((g) => g.buckets);
+    if (allBuckets.length === 0) {
+      lines.push("      No active quota limits reported.");
+      lines.push("");
+      continue;
+    }
+
     const maxLabelLength = allBuckets.reduce(
       (max, b) => Math.max(max, `● ${b.displayName}`.length),
       0

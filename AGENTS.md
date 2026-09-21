@@ -25,11 +25,12 @@ pi-for-raviedho/
 │   └── types.ts                # Cloud Code Assist protocol schemas
 ├── codex-filter/
 │   ├── catalog.ts              # Live catalog fetching from OpenAI & disk caching
-│   ├── index.ts                # Provider wrapper with filterModels hook & /codex-plan command
+│   ├── index.ts                # Provider wrapper with filterModels hook
 │   ├── plan.ts                 # JWT claim parsing for chatgpt_plan_type & chatgpt_account_id
 │   └── types.ts                # Catalog & cache types
 ├── usage/
 │   ├── antigravity.ts          # Cloud Code Assist quota bucket scraper
+│   ├── codex.ts                # OpenAI Codex /wham/usage quota scraper
 │   ├── format.ts               # Terminal & ASCII progress bar formatting
 │   ├── index.ts                # /usage command registration (TUI overlay + CLI fallback)
 │   └── types.ts                # Quota report structures
@@ -83,7 +84,6 @@ pi --list-models
 
 # Test commands
 pi -p "/usage"
-pi -p "/codex-plan"
 ```
 
 ---
