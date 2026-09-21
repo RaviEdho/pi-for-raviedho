@@ -19,6 +19,7 @@ import {
   refreshAntigravityToken,
 } from "./antigravity/oauth.js";
 import { streamAntigravity } from "./antigravity/stream.js";
+import { registerUsageCommand } from "./usage/index.js";
 
 function syncOmpAuthAndGetToken(): string | undefined {
   let token = process.env.ANTIGRAVITY_API_KEY;
@@ -126,4 +127,7 @@ export default async function (pi: ExtensionAPI) {
 
     streamSimple: streamAntigravity,
   });
+
+  // Register /usage command
+  registerUsageCommand(pi);
 }

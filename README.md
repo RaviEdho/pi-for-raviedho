@@ -54,6 +54,17 @@ pi --model google-antigravity/claude-sonnet-4-6
 # Non-interactive query
 pi --model google-antigravity/gemini-2.5-flash -p "Summarize git status"
 ```
+### 4. Check Provider Quotas and Usage
+
+Run `/usage` to view live quotas, progress bars, and reset times:
+
+```bash
+# In interactive Pi session:
+/usage
+
+# Or from terminal:
+pi -p "/usage"
+```
 
 ## Development
 
