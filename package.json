@@ -1,7 +1,10 @@
 {
   "name": "pi-for-raviedho",
   "version": "0.1.0",
+  "private": true,
+  "description": "Personalized Pi extension package providing Google Antigravity provider and dynamic OpenAI Codex plan filtering.",
   "type": "module",
+  "license": "MIT",
   "keywords": [
     "pi-package"
   ],
@@ -14,10 +17,15 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "^0.86.1",
+    "@earendil-works/pi-tui": "*",
     "@types/node": "^22.0.0",
     "typescript": "^5.0.0"
   }
