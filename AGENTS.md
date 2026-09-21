@@ -7,9 +7,10 @@ Guidance and instructions for AI agents working in this repository.
 `pi-for-raviedho` is a personal extension suite for the [Pi](https://github.com/earendil-works/pi) coding agent. It bundles custom providers, tools, quota monitors, and model filtering logic into an installable Pi package.
 
 ### Key Capabilities
+- **Multi-Account Manager & Balancer (`accounts/`)**: Multi-account store (`accounts.json`), session affinity hashing, automatic discovery/sync from Oh My Pi (`agent.db`) and Pi (`auth.json`), automatic token refresh, and transparent 429 rate limit failover across accounts during streaming turns.
 - **Google Antigravity Provider (`antigravity/`)**: Custom provider integrating with Google Cloud Code Assist (`daily-cloudcode-pa.googleapis.com`) using OAuth 2.0 with automatic project discovery / onboarding (`cloudaicompanionProject`).
 - **OpenAI Codex Plan Filter (`codex-filter/`)**: Dynamic tier detection from OAuth token JWT claims (`chatgpt_plan_type`). Fetches the live model catalog from OpenAI and drops unsupported models from `/model` and `pi --list-models` via `@earendil-works/pi-ai`'s native `filterModels` hook.
-- **Provider Quota & Usage Monitor (`usage/`)**: Live quota tracking, percentage consumption bars, and reset countdowns across configured providers via the `/usage` command.
+- **Provider Quota & Usage Monitor (`usage/`)**: Live multi-account quota tracking, percentage consumption bars, and reset countdowns across configured providers via the `/usage` command.
 
 ---
 
@@ -17,6 +18,12 @@ Guidance and instructions for AI agents working in this repository.
 
 ```text
 pi-for-raviedho/
+├── accounts/
+│   ├── balancer.ts             # AccountBalancer: session affinity, 429 cooldown, token refresh
+│   ├── index.ts                # Account subsystem public exports
+│   ├── store.ts                # AccountStore: persistence, OMP agent.db sync, auth.json sync
+│   ├── types.ts                # AccountCredential and store schemas
+│   └── wrapper.ts              # executeWithMultiAccountFailover: stream wrapper with 429 rotation
 ├── antigravity/
 │   ├── constants.ts            # Wire profiles, OAuth endpoints, Google client configuration
 │   ├── models.ts               # Dynamic model catalog discovery & collapsing from Google

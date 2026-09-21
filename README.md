@@ -19,6 +19,8 @@ Personalized Pi extension package providing the **Google Antigravity** provider 
 - **Tool Calling**: Full support for tool calling with schema normalization for Claude models.
 - **Thinking & Reasoning Support**: Discrete effort-tier routing and thinking budget configuration.
 - **Dynamic OpenAI Codex Plan Filtering**: Automatically detects your ChatGPT plan tier (`free`, `plus`, `pro`) from your OAuth token, queries OpenAI's live model endpoint, and filters out unavailable models from `/model` and `pi --list-models`.
+- **Multi-Account Support & Auto-Failover**: Pool multiple accounts per provider (Google Antigravity, OpenAI Codex, etc.) with deterministic session affinity for optimal prompt caching, automatic OAuth token refresh, and transparent failover on 429 / quota exhaustion.
+- **Oh My Pi (OMP) Automatic Sync**: Automatically discovers and imports authenticated accounts from `~/.omp/agent/agent.db` and syncs the active account to `~/.pi/agent/auth.json`.
 
 ## Usage
 
@@ -57,7 +59,7 @@ pi --model google-antigravity/gemini-2.5-flash -p "Summarize git status"
 ```
 ### 4. Check Provider Quotas and Usage
 
-Run `/usage` to view live quotas, progress bars, and reset times:
+Run `/usage` to view live quotas, progress bars, and reset times across all accounts:
 
 ```bash
 # In interactive Pi session:

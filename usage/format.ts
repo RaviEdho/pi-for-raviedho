@@ -1,4 +1,4 @@
-import type { ProviderUsageReport } from "./types.js";
+import type { ProviderUsageReport, SessionUsageInfo } from "./types.js";
 
 /**
  * Formats an ISO 8601 timestamp into a compact relative string like "1d22h", "3h46m", or "12m".
@@ -28,14 +28,31 @@ export function makeProgressBar(usedFraction: number, width = 28): string {
 }
 
 /**
- * Formats usage reports into styled terminal text matching omp's layout.
+ * Formats usage reports into styled terminal text matching omp's layout,
+ * including session-bound account indications.
  */
 export function formatUsageText(
   reports: ProviderUsageReport[],
-  options?: { now?: number; colorize?: boolean }
+  options?: { now?: number; sessionInfo?: SessionUsageInfo; colorize?: boolean }
 ): string {
   const now = options?.now ?? Date.now();
   const lines: string[] = [];
+
+  // Session context header if available
+  if (options?.sessionInfo && (options.sessionInfo.accountEmail || options.sessionInfo.modelId)) {
+    const sessionParts: string[] = [];
+    if (options.sessionInfo.sessionId) {
+      sessionParts.push(`session: ${options.sessionInfo.sessionId.slice(0, 8)}...`);
+    }
+    if (options.sessionInfo.modelId) {
+      sessionParts.push(`model: ${options.sessionInfo.modelId}`);
+    }
+    if (options.sessionInfo.accountEmail) {
+      sessionParts.push(`account: ${options.sessionInfo.accountEmail}`);
+    }
+    lines.push(`Active Session · ${sessionParts.join(" · ")}`);
+    lines.push("");
+  }
 
   const earliestFetch = reports.reduce((acc, r) => Math.min(acc, r.fetchedAt), now);
   const ageMs = Math.max(0, now - earliestFetch);
@@ -44,55 +61,63 @@ export function formatUsageText(
   lines.push(`Usage · fetched ${ageText} ago`);
   lines.push("");
 
+  const byProvider = new Map<string, ProviderUsageReport[]>();
   for (const report of reports) {
-    lines.push(`${report.providerName} — 1 account`);
-    const accountLabel = report.accountEmail ?? (report.planType ? "OAuth account" : undefined);
-    if (accountLabel) {
-      let header = `  ● ${accountLabel}`;
-      if (report.planType) {
-        header += ` · plan: ${report.planType}`;
-      }
-      if (report.resetCredits && report.resetCredits > 0) {
-        header += ` · ✦ ${report.resetCredits} saved reset${report.resetCredits === 1 ? "" : "s"}`;
-      }
-      lines.push(header);
-    }
-
-    if (report.error) {
-      lines.push(`      Could not fetch usage: ${report.error}`);
-      lines.push("");
-      continue;
-    }
-
-    // Collect all buckets to determine column alignment
-    const allBuckets = report.groups.flatMap((g) => g.buckets);
-    if (allBuckets.length === 0) {
-      lines.push("      No active quota limits reported.");
-      lines.push("");
-      continue;
-    }
-
-    const maxLabelLength = allBuckets.reduce(
-      (max, b) => Math.max(max, `● ${b.displayName}`.length),
-      0
-    );
-    const labelWidth = Math.max(30, maxLabelLength + 2);
-
-    for (const bucket of allBuckets) {
-      const label = `● ${bucket.displayName}`.padEnd(labelWidth, " ");
-      const bar = makeProgressBar(bucket.usedFraction, 28);
-      const percentStr = `${(bucket.usedFraction * 100).toFixed(1)}% used`.padStart(10, " ");
-      const resetStr = bucket.resetTime ? ` · resets in ${formatRelativeTime(bucket.resetTime, now)}` : "";
-
-      lines.push(`      ${label}  ${bar}  ${percentStr}${resetStr}`);
-    }
-
-    if (report.capacitySummary) {
-      lines.push(`  ${report.capacitySummary}`);
-    }
-
-    lines.push("");
+    const list = byProvider.get(report.providerName) || [];
+    list.push(report);
+    byProvider.set(report.providerName, list);
   }
 
-  return lines.join("\n").trimEnd();
+  for (const [providerName, providerReports] of byProvider.entries()) {
+    lines.push(`${providerName} — ${providerReports.length} account${providerReports.length === 1 ? "" : "s"}`);
+
+    for (const report of providerReports) {
+      const marker = report.isSessionAccount ? "●" : "○";
+      const accountLabel = report.accountEmail ?? (report.planType ? "OAuth account" : undefined);
+
+      if (accountLabel) {
+        let header = `  ${marker} ${accountLabel}`;
+        if (report.planType) {
+          header += ` · plan: ${report.planType}`;
+        }
+        if (report.resetCredits && report.resetCredits > 0) {
+          header += ` · ✦ ${report.resetCredits} saved reset${report.resetCredits === 1 ? "" : "s"}`;
+        }
+        lines.push(header);
+      }
+
+      if (report.error) {
+        lines.push(`      Could not fetch usage: ${report.error}`);
+        lines.push("");
+        continue;
+      }
+
+      // Collect all buckets to determine column alignment
+      const allBuckets = report.groups.flatMap((g) => g.buckets);
+      if (allBuckets.length === 0) {
+        lines.push("      No active quota limits reported.");
+        lines.push("");
+        continue;
+      }
+
+      const maxLabelLength = allBuckets.reduce(
+        (max, b) => Math.max(max, `● ${b.displayName}`.length),
+        0
+      );
+      const labelWidth = Math.max(30, maxLabelLength + 2);
+
+      for (const bucket of allBuckets) {
+        const label = `● ${bucket.displayName}`.padEnd(labelWidth, " ");
+        const bar = makeProgressBar(bucket.usedFraction, 28);
+        const percentStr = `${(bucket.usedFraction * 100).toFixed(1)}% used`.padStart(10, " ");
+        const resetStr = bucket.resetTime ? ` · resets in ${formatRelativeTime(bucket.resetTime, now)}` : "";
+
+        lines.push(`      ${label}  ${bar}  ${percentStr}${resetStr}`);
+      }
+
+      lines.push("");
+    }
+  }
+
+  return lines.join("\n");
 }

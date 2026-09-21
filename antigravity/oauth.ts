@@ -1,6 +1,7 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
+import { AccountStore } from "../accounts/store.js";
 import {
   CALLBACK_PORT,
   CALLBACK_PATH,
@@ -17,6 +18,7 @@ import {
   ONBOARD_TIMEOUT_MS,
   ONBOARD_USER_URL,
   OPERATIONS_URL,
+  PROVIDER_ID,
   REDIRECT_URI,
 } from "./constants.js";
 import type {
@@ -284,6 +286,7 @@ export async function loginAntigravity(
   const tokenData = (await tokenRes.json()) as {
     access_token: string;
     refresh_token?: string;
+    id_token?: string;
     expires_in: number;
   };
 
@@ -305,16 +308,52 @@ export async function loginAntigravity(
     // Non-fatal if userinfo fails
   }
 
+  if (!email && tokenData.id_token) {
+    try {
+      const parts = tokenData.id_token.split(".");
+      if (parts.length === 3) {
+        const payload = JSON.parse(Buffer.from(parts[1], "base64").toString("utf-8"));
+        if (typeof payload?.email === "string") {
+          email = payload.email;
+        }
+      }
+    } catch {
+      // Ignore id_token decode error
+    }
+  }
+
   // Discover and onboard project
   const projectId = await discoverProject(tokenData.access_token, callbacks.onProgress);
 
-  return {
+  const creds: AntigravityOAuthCredentials = {
     access: tokenData.access_token,
     refresh: tokenData.refresh_token,
     expires: Date.now() + (tokenData.expires_in - 300) * 1000,
     projectId,
     email,
   };
+
+  try {
+    const store = AccountStore.getInstance();
+    const identity = email || (tokenData.refresh_token ? `token-${tokenData.refresh_token.slice(-8)}` : projectId);
+    const id = AccountStore.generateAccountId(PROVIDER_ID, identity);
+    store.upsert({
+      id,
+      provider: PROVIDER_ID,
+      type: "oauth",
+      email,
+      projectId,
+      access: creds.access,
+      refresh: creds.refresh,
+      expires: creds.expires,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  } catch (err) {
+    // Non-fatal if store upsert fails
+  }
+
+  return creds;
 }
 
 /**

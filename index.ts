@@ -1,9 +1,8 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { Api } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { AccountBalancer } from "./accounts/balancer.js";
+import { AccountStore } from "./accounts/store.js";
+import { executeWithMultiAccountFailover } from "./accounts/wrapper.js";
 import {
   ANTIGRAVITY_PRIMARY_ENDPOINT,
   PROVIDER_ID,
@@ -22,69 +21,21 @@ import { streamAntigravity } from "./antigravity/stream.js";
 import { registerCodexFilter } from "./codex-filter/index.js";
 import { registerUsageCommand } from "./usage/index.js";
 
-function syncOmpAuthAndGetToken(): string | undefined {
-  let token = process.env.ANTIGRAVITY_API_KEY;
-  try {
-    const home = homedir();
-    const piAuthPath = join(home, ".pi/agent/auth.json");
-    let existingJson: Record<string, unknown> = {};
-
-    if (existsSync(piAuthPath)) {
-      try {
-        const parsed = JSON.parse(readFileSync(piAuthPath, "utf-8"));
-        if (parsed && typeof parsed === "object") {
-          existingJson = parsed as Record<string, unknown>;
-          const antigravityCred = existingJson["google-antigravity"];
-          if (
-            antigravityCred &&
-            typeof antigravityCred === "object" &&
-            "access" in antigravityCred &&
-            typeof antigravityCred.access === "string"
-          ) {
-            token = token || antigravityCred.access;
-          }
-        }
-      } catch {
-        // Fall through
-      }
-    }
-
-    if (!token) {
-      const ompDbPath = join(home, ".omp/agent/agent.db");
-      if (existsSync(ompDbPath)) {
-        const raw = execFileSync(
-          "sqlite3",
-          [
-            ompDbPath,
-            "SELECT data FROM auth_credentials WHERE provider='google-antigravity' ORDER BY updated_at DESC LIMIT 1;",
-          ],
-          { encoding: "utf-8" }
-        ).trim();
-
-        if (raw.startsWith("{")) {
-          const parsed = JSON.parse(raw);
-          existingJson["google-antigravity"] = {
-            type: "oauth",
-            access: parsed.access,
-            refresh: parsed.refresh,
-            expires: parsed.expires ?? Date.now() + 3600 * 1000,
-            projectId: parsed.projectId,
-            email: parsed.email,
-          };
-          writeFileSync(piAuthPath, JSON.stringify(existingJson, null, 2), "utf-8");
-          token = parsed.access;
-        }
-      }
-    }
-  } catch {
-    // Non-fatal if sync is unavailable
-  }
-  return token;
-}
-
 export default async function (pi: ExtensionAPI) {
-  // Sync existing OAuth credentials from omp and retrieve token
-  const token = syncOmpAuthAndGetToken();
+  // Initialize multi-account store and auto-discover accounts from omp and Pi stores
+  const store = AccountStore.getInstance();
+  const balancer = AccountBalancer.getInstance();
+
+  // Retrieve active token for initial model discovery
+  let token: string | undefined = process.env.ANTIGRAVITY_API_KEY;
+  const activeAccount = store.getActive(PROVIDER_ID);
+  if (activeAccount) {
+    try {
+      token = await balancer.ensureFreshToken(activeAccount);
+    } catch {
+      // Non-fatal if offline
+    }
+  }
 
   // Dynamically fetch and collapse live models from Google if token is available
   let models = DEFAULT_ANTIGRAVITY_MODELS;
@@ -99,7 +50,7 @@ export default async function (pi: ExtensionAPI) {
     }
   }
 
-  // Register Google Antigravity provider with full OAuth and Cloud Code Assist streaming support
+  // Register Google Antigravity provider with multi-account failover and streaming support
   pi.registerProvider(PROVIDER_ID, {
     name: PROVIDER_NAME,
     baseUrl: ANTIGRAVITY_PRIMARY_ENDPOINT,
@@ -109,7 +60,15 @@ export default async function (pi: ExtensionAPI) {
     models,
 
     async refreshModels(context) {
-      const activeToken = syncOmpAuthAndGetToken();
+      const currentActive = store.getActive(PROVIDER_ID);
+      let activeToken: string | undefined;
+      if (currentActive) {
+        try {
+          activeToken = await balancer.ensureFreshToken(currentActive);
+        } catch {
+          // Ignore
+        }
+      }
       if (activeToken) {
         const liveModels = await fetchAndCollapseAntigravityModels(activeToken, context?.signal);
         if (liveModels && liveModels.length > 0) {
@@ -126,12 +85,32 @@ export default async function (pi: ExtensionAPI) {
       getApiKey: getAntigravityApiKey,
     },
 
-    streamSimple: streamAntigravity,
+    streamSimple(model, transcript, options) {
+      return executeWithMultiAccountFailover(
+        PROVIDER_ID,
+        model,
+        transcript,
+        options,
+        (m, ctx, opts, resolvedAuth) => {
+          const apiKey = resolvedAuth.account.projectId
+            ? JSON.stringify({
+                accessToken: resolvedAuth.token,
+                projectId: resolvedAuth.account.projectId,
+                email: resolvedAuth.account.email,
+              })
+            : resolvedAuth.token;
+          return streamAntigravity(m, ctx, {
+            ...opts,
+            apiKey,
+          });
+        }
+      );
+    },
   });
 
-  // Register /usage command
+  // Register /usage quota monitor command
   registerUsageCommand(pi);
 
-  // Register dynamic OpenAI Codex plan filter
+  // Register dynamic OpenAI Codex plan filter and multi-account provider
   registerCodexFilter(pi);
 }
