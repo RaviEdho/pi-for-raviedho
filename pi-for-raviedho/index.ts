@@ -19,6 +19,7 @@ import {
   refreshAntigravityToken,
 } from "./antigravity/oauth.js";
 import { streamAntigravity } from "./antigravity/stream.js";
+import { registerCodexFilter } from "./codex-filter/index.js";
 import { registerUsageCommand } from "./usage/index.js";
 
 function syncOmpAuthAndGetToken(): string | undefined {
@@ -130,4 +131,7 @@ export default async function (pi: ExtensionAPI) {
 
   // Register /usage command
   registerUsageCommand(pi);
+
+  // Register dynamic OpenAI Codex plan filter
+  registerCodexFilter(pi);
 }
