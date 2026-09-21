@@ -7,7 +7,7 @@
   ],
   "pi": {
     "extensions": [
-      "./pi-for-raviedho"
+      "./index.ts"
     ]
   },
   "scripts": {

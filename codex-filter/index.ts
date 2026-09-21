@@ -153,7 +153,11 @@ export function registerCodexFilter(pi: ExtensionAPI): void {
         lines.push("Live catalog could not be fetched. Using default free-tier whitelist.");
       }
 
-      ctx.ui.notify(lines.join("\n"), "info");
+      if (ctx.hasUI && ctx.mode === "tui") {
+        ctx.ui.notify(lines.join("\n"), "info");
+      } else {
+        console.log(lines.join("\n"));
+      }
     },
   });
 }

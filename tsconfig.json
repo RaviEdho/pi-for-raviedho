@@ -10,6 +10,12 @@
     "noEmit": true
   },
   "include": [
-    "pi-for-raviedho/**/*"
+    "index.ts",
+    "antigravity/**/*",
+    "usage/**/*",
+    "codex-filter/**/*"
+  ],
+  "exclude": [
+    "node_modules"
   ]
 }
