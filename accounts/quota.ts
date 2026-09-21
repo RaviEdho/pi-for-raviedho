@@ -3,14 +3,16 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fetchAntigravityUsage } from "../usage/antigravity.js";
 import { fetchCodexUsage } from "../usage/codex.js";
-import type { ProviderUsageReport } from "../usage/types.js";
+import { computeTimeElapsedFraction } from "../usage/format.js";
+import type { ProviderUsageReport, QuotaBucket } from "../usage/types.js";
 import type { AccountCredential } from "./types.js";
 
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache TTL
 
 export interface AccountQuotaHealth {
   isExhausted: boolean;
-  usedFraction: number; // 0.0 to 1.0
+  usedFraction: number; // 0.0 to 1.0 (highest used window)
+  paceDelta: number; // usedFraction - timeElapsedFraction on longest (e.g. weekly) window
   remainingFraction: number;
   resetTimeMs?: number;
   reason?: string;
@@ -154,6 +156,7 @@ export class QuotaManager {
       return {
         isExhausted: true,
         usedFraction: 1.0,
+        paceDelta: 1.0,
         remainingFraction: 0.0,
         resetTimeMs: account.blockedUntil,
         reason: account.blockedReason || "Rate limited (429)",
@@ -162,10 +165,11 @@ export class QuotaManager {
 
     const report = this.getReport(account.id);
     if (!report || report.groups.length === 0) {
-      // No cached report yet: assume healthy with median usage
+      // No cached report yet: assume healthy with median pacing
       return {
         isExhausted: false,
         usedFraction: 0.0,
+        paceDelta: 0.0,
         remainingFraction: 1.0,
       };
     }
@@ -211,9 +215,33 @@ export class QuotaManager {
         }
       }
 
+      // Find the longest limit window (weekly) for reset pacing calculation
+      let longestBucket = relevantBuckets.find(
+        (b) =>
+          b.bucketId.toLowerCase().includes("weekly") ||
+          (b.windowSeconds && b.windowSeconds >= 6 * 86400)
+      );
+      if (!longestBucket && relevantBuckets.length > 0) {
+        longestBucket = relevantBuckets.reduce((prev, curr) =>
+          (curr.windowSeconds || 0) > (prev.windowSeconds || 0) ? curr : prev
+        );
+      }
+
+      let longestUsed = 0.0;
+      let longestTimeElapsed = 0.0;
+      if (longestBucket) {
+        const isPastReset = longestBucket.resetTime ? Date.parse(longestBucket.resetTime) <= now : false;
+        longestUsed = isPastReset ? 0.0 : longestBucket.usedFraction;
+        longestTimeElapsed =
+          computeTimeElapsedFraction(longestBucket.resetTime, longestBucket.windowSeconds, now) ?? 0.0;
+      }
+
+      const paceDelta = longestUsed - longestTimeElapsed;
+
       return {
         isExhausted,
         usedFraction: maxUsed,
+        paceDelta,
         remainingFraction: Math.max(0, 1 - maxUsed),
         resetTimeMs: soonestResetMs,
         reason: exhaustionReason,
@@ -250,9 +278,27 @@ export class QuotaManager {
         }
       }
 
+      // Find the longest limit window (e.g. 7-day secondary window)
+      let longestBucket = allBuckets.reduce<QuotaBucket | undefined>((prev, curr) => {
+        if (!prev) return curr;
+        return (curr.windowSeconds || 0) > (prev.windowSeconds || 0) ? curr : prev;
+      }, undefined);
+
+      let longestUsed = 0.0;
+      let longestTimeElapsed = 0.0;
+      if (longestBucket) {
+        const isPastReset = longestBucket.resetTime ? Date.parse(longestBucket.resetTime) <= now : false;
+        longestUsed = isPastReset ? 0.0 : longestBucket.usedFraction;
+        longestTimeElapsed =
+          computeTimeElapsedFraction(longestBucket.resetTime, longestBucket.windowSeconds, now) ?? 0.0;
+      }
+
+      const paceDelta = longestUsed - longestTimeElapsed;
+
       return {
         isExhausted,
         usedFraction: maxUsed,
+        paceDelta,
         remainingFraction: Math.max(0, 1 - maxUsed),
         resetTimeMs: soonestResetMs,
         reason: exhaustionReason,
@@ -262,6 +308,7 @@ export class QuotaManager {
     return {
       isExhausted: false,
       usedFraction: 0.0,
+      paceDelta: 0.0,
       remainingFraction: 1.0,
     };
   }
