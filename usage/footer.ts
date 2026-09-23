@@ -254,9 +254,10 @@ function renderFooterLine2(
 
   const contextUsage = ctx.getContextUsage?.();
   if (contextUsage && contextUsage.contextWindow > 0) {
+    const tokensStr =
+      contextUsage.tokens != null ? formatTokens(contextUsage.tokens) : "?";
+    const contextDisplay = `${tokensStr}/${formatTokens(contextUsage.contextWindow)}`;
     const pctVal = contextUsage.percent ?? 0;
-    const pctStr = contextUsage.percent != null ? `${pctVal.toFixed(1)}%` : "?";
-    const contextDisplay = `${pctStr}/${formatTokens(contextUsage.contextWindow)}`;
     let coloredContext = contextDisplay;
     if (pctVal > 90) {
       coloredContext = theme.fg("error", contextDisplay);
