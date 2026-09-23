@@ -19,13 +19,17 @@ export function formatRelativeTime(isoString?: string, now = Date.now()): string
 
 /**
  * Computes the fraction of time elapsed in the current rate limit window (0.0 to 1.0).
+ * For unused buckets (usedFraction === 0), the timer has not started ticking, so 0.0 is returned.
  */
 export function computeTimeElapsedFraction(
   resetTimeIso?: string,
   windowSeconds?: number,
-  now = Date.now()
+  now = Date.now(),
+  usedFraction?: number
 ): number | undefined {
   if (!resetTimeIso || !windowSeconds || windowSeconds <= 0) return undefined;
+  if (usedFraction !== undefined && usedFraction <= 0) return 0.0;
+
   const resetMs = new Date(resetTimeIso).getTime();
   if (Number.isNaN(resetMs)) return undefined;
   const remainingMs = resetMs - now;
@@ -117,14 +121,17 @@ export function formatUsageText(
       const accountLabel = report.accountEmail ?? (report.planType ? "OAuth account" : undefined);
 
       if (accountLabel) {
-        let header = `  ${marker} ${accountLabel}`;
+        let content = `${marker} ${accountLabel}`;
         if (report.planType) {
-          header += ` · plan: ${report.planType}`;
+          content += ` · plan: ${report.planType}`;
         }
         if (report.resetCredits && report.resetCredits > 0) {
-          header += ` · ✦ ${report.resetCredits} saved reset${report.resetCredits === 1 ? "" : "s"}`;
+          content += ` · ✦ ${report.resetCredits} saved reset${report.resetCredits === 1 ? "" : "s"}`;
         }
-        lines.push(header);
+        if (report.isSessionAccount) {
+          content = `\x1b[1m${content}\x1b[22m`;
+        }
+        lines.push(`  ${content}`);
       }
 
       if (report.error) {
@@ -149,10 +156,21 @@ export function formatUsageText(
 
       for (const bucket of allBuckets) {
         const label = `● ${bucket.displayName}`.padEnd(labelWidth, " ");
-        const timeElapsed = computeTimeElapsedFraction(bucket.resetTime, bucket.windowSeconds, now);
+        const timeElapsed = computeTimeElapsedFraction(
+          bucket.resetTime,
+          bucket.windowSeconds,
+          now,
+          bucket.usedFraction
+        );
         const bar = makeProgressBar(bucket.usedFraction, 28, timeElapsed);
         const percentStr = `${(bucket.usedFraction * 100).toFixed(1)}% used`.padStart(10, " ");
-        const resetStr = bucket.resetTime ? ` · resets in ${formatRelativeTime(bucket.resetTime, now)}` : "";
+        
+        let resetStr = "";
+        if (bucket.usedFraction <= 0 && (timeElapsed === 0 || timeElapsed === undefined)) {
+          resetStr = " · ready";
+        } else if (bucket.resetTime) {
+          resetStr = ` · ${formatRelativeTime(bucket.resetTime, now)}`;
+        }
 
         lines.push(`      ${label}  ${bar}  ${percentStr}${resetStr}`);
       }

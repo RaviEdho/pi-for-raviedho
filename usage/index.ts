@@ -101,6 +101,11 @@ export async function collectUsageReports(
             );
             report.isSessionAccount = isSession;
             report.accountId = acc.id;
+            if (report.planType && report.planType !== acc.planType) {
+              acc.planType = report.planType;
+              acc.updatedAt = Date.now();
+              store.upsert(acc);
+            }
             QuotaManager.getInstance().setReport(acc.id, report);
             return report;
           } catch (err) {

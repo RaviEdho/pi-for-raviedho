@@ -31,7 +31,7 @@ interface RawQuotaSummaryResponse {
 }
 
 /**
- * Fetches the user quota summary from Antigravity Cloud Code Assist.
+ * Fetches the user quota summary and active plan tier from Antigravity Cloud Code Assist.
  */
 export async function fetchAntigravityUsage(
   accessToken: string,
@@ -42,22 +42,54 @@ export async function fetchAntigravityUsage(
 ): Promise<ProviderUsageReport> {
   const fetchedAt = Date.now();
   const url = `${ANTIGRAVITY_PRIMARY_ENDPOINT}/v1internal:retrieveUserQuotaSummary`;
-  const planType = fallbackPlanType || "free-tier";
+  let planType = fallbackPlanType;
 
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        "User-Agent": getAntigravityUserAgent(),
-      },
-      body: JSON.stringify({ project: projectId }),
-      signal,
-    });
+    const [quotaRes, loadRes] = await Promise.allSettled([
+      fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          "User-Agent": getAntigravityUserAgent(),
+        },
+        body: JSON.stringify({ project: projectId }),
+        signal,
+      }),
+      fetch(LOAD_CODE_ASSIST_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          "User-Agent": getAntigravityUserAgent(),
+        },
+        body: JSON.stringify({
+          cloudaicompanionProject: projectId,
+          metadata: { ideType: "ANTIGRAVITY" },
+        }),
+        signal,
+      }),
+    ]);
 
-    if (!res.ok) {
-      const errorText = await res.text();
+    if (loadRes.status === "fulfilled" && loadRes.value.ok) {
+      try {
+        const loadData = (await loadRes.value.json()) as LoadCodeAssistResponse;
+        planType = loadData.paidTier?.id || loadData.currentTier?.id || planType || "free-tier";
+      } catch {
+        // Ignore JSON parse errors for tier
+      }
+    }
+
+    if (!planType) {
+      planType = "free-tier";
+    }
+
+    if (quotaRes.status === "rejected" || !quotaRes.value.ok) {
+      const errorText =
+        quotaRes.status === "fulfilled"
+          ? await quotaRes.value.text()
+          : String(quotaRes.reason);
+      const statusCode = quotaRes.status === "fulfilled" ? quotaRes.value.status : "Error";
       return {
         providerId: "google-antigravity",
         providerName: "Google Antigravity",
@@ -65,11 +97,11 @@ export async function fetchAntigravityUsage(
         planType,
         fetchedAt,
         groups: [],
-        error: `HTTP ${res.status}: ${errorText}`,
+        error: `HTTP ${statusCode}: ${errorText}`,
       };
     }
 
-    const data = (await res.json()) as RawQuotaSummaryResponse;
+    const data = (await quotaRes.value.json()) as RawQuotaSummaryResponse;
     const rawGroups = data.groups ?? [];
 
     let min5hRemaining = 1.0;

@@ -195,7 +195,8 @@ function buildUsageBar(
   const timeElapsed = computeTimeElapsedFraction(
     primary.resetTime,
     primary.windowSeconds,
-    now
+    now,
+    primary.usedFraction
   );
   const progressBar = makeProgressBar(primary.usedFraction, 12, timeElapsed);
 
@@ -203,7 +204,9 @@ function buildUsageBar(
   const barSegment = theme.fg(color, `[${progressBar}] ${usedPct}%`);
 
   const resetSegment = primary.resetTime
-    ? theme.fg("dim", ` (${formatRelativeTime(primary.resetTime, now)})`)
+    ? primary.usedFraction <= 0 && (timeElapsed === 0 || timeElapsed === undefined)
+      ? theme.fg("dim", " (ready)")
+      : theme.fg("dim", ` (${formatRelativeTime(primary.resetTime, now)})`)
     : "";
 
   let secondarySegment = "";

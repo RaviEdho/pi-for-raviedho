@@ -233,7 +233,7 @@ export class QuotaManager {
         const isPastReset = longestBucket.resetTime ? Date.parse(longestBucket.resetTime) <= now : false;
         longestUsed = isPastReset ? 0.0 : longestBucket.usedFraction;
         longestTimeElapsed =
-          computeTimeElapsedFraction(longestBucket.resetTime, longestBucket.windowSeconds, now) ?? 0.0;
+          computeTimeElapsedFraction(longestBucket.resetTime, longestBucket.windowSeconds, now, longestUsed) ?? 0.0;
       }
 
       const paceDelta = longestUsed - longestTimeElapsed;
@@ -290,7 +290,7 @@ export class QuotaManager {
         const isPastReset = longestBucket.resetTime ? Date.parse(longestBucket.resetTime) <= now : false;
         longestUsed = isPastReset ? 0.0 : longestBucket.usedFraction;
         longestTimeElapsed =
-          computeTimeElapsedFraction(longestBucket.resetTime, longestBucket.windowSeconds, now) ?? 0.0;
+          computeTimeElapsedFraction(longestBucket.resetTime, longestBucket.windowSeconds, now, longestUsed) ?? 0.0;
       }
 
       const paceDelta = longestUsed - longestTimeElapsed;
