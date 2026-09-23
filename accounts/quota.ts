@@ -14,6 +14,7 @@ export interface AccountQuotaHealth {
   usedFraction: number; // 0.0 to 1.0 (highest used window)
   paceDelta: number; // usedFraction - timeElapsedFraction on longest (e.g. weekly) window
   remainingFraction: number;
+  isUnstarted?: boolean; // true if 0% used and reset timer hasn't started ticking yet
   resetTimeMs?: number;
   reason?: string;
 }
@@ -158,6 +159,7 @@ export class QuotaManager {
         usedFraction: 1.0,
         paceDelta: 1.0,
         remainingFraction: 0.0,
+        isUnstarted: false,
         resetTimeMs: account.blockedUntil,
         reason: account.blockedReason || "Rate limited (429)",
       };
@@ -165,12 +167,13 @@ export class QuotaManager {
 
     const report = this.getReport(account.id);
     if (!report || report.groups.length === 0) {
-      // No cached report yet: assume healthy with median pacing
+      // No cached report yet: assume unstarted healthy candidate
       return {
         isExhausted: false,
         usedFraction: 0.0,
         paceDelta: 0.0,
         remainingFraction: 1.0,
+        isUnstarted: true,
       };
     }
 
@@ -237,12 +240,14 @@ export class QuotaManager {
       }
 
       const paceDelta = longestUsed - longestTimeElapsed;
+      const isUnstarted = maxUsed <= 0.0001 && longestTimeElapsed <= 0.0001;
 
       return {
         isExhausted,
         usedFraction: maxUsed,
         paceDelta,
         remainingFraction: Math.max(0, 1 - maxUsed),
+        isUnstarted,
         resetTimeMs: soonestResetMs,
         reason: exhaustionReason,
       };
@@ -294,12 +299,14 @@ export class QuotaManager {
       }
 
       const paceDelta = longestUsed - longestTimeElapsed;
+      const isUnstarted = maxUsed <= 0.0001 && longestTimeElapsed <= 0.0001;
 
       return {
         isExhausted,
         usedFraction: maxUsed,
         paceDelta,
         remainingFraction: Math.max(0, 1 - maxUsed),
+        isUnstarted,
         resetTimeMs: soonestResetMs,
         reason: exhaustionReason,
       };

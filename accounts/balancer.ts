@@ -148,7 +148,12 @@ export class AccountBalancer {
     }
 
     if (available.length > 0) {
-      available.sort((a, b) => a.health.paceDelta - b.health.paceDelta);
+      available.sort((a, b) => {
+        // Prioritize unstarted accounts (0 usage, 0 timer elapsed) so their reset cycle begins
+        if (a.health.isUnstarted && !b.health.isUnstarted) return -1;
+        if (!a.health.isUnstarted && b.health.isUnstarted) return 1;
+        return a.health.paceDelta - b.health.paceDelta;
+      });
       return available[0].account;
     }
 
@@ -320,8 +325,13 @@ export class AccountBalancer {
       // Retain prompt-cache session affinity as long as account is healthy
       chosen = sessionBoundAccount;
     } else {
-      // Pick the account with the lowest pace delta (furthest under budget)
-      available.sort((a, b) => a.health.paceDelta - b.health.paceDelta);
+      // Pick unstarted accounts first (0 usage, unstarted timer) so their reset window begins,
+      // otherwise pick the account furthest under budget (lowest pace delta).
+      available.sort((a, b) => {
+        if (a.health.isUnstarted && !b.health.isUnstarted) return -1;
+        if (!a.health.isUnstarted && b.health.isUnstarted) return 1;
+        return a.health.paceDelta - b.health.paceDelta;
+      });
       chosen = available[0].account;
       if (sessionId) {
         this.recordSessionBinding(sessionId, provider, chosen.id);
