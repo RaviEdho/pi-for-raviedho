@@ -22,6 +22,16 @@ function formatTokens(count: number): string {
   return `${Math.round(count / 1000000)}M`;
 }
 
+function formatCost(cost: number): string {
+  if (cost <= 0) return "$0";
+  if (cost >= 0.001) {
+    return `$${cost.toFixed(3)}`;
+  }
+  // For small costs under 0.001 (e.g. 0.0004), dynamically determine decimal places to show significant digits
+  const decimals = Math.min(6, Math.max(4, -Math.floor(Math.log10(cost))));
+  return `$${cost.toFixed(decimals)}`;
+}
+
 function formatCwd(cwd: string, home: string | undefined): string {
   if (!home) return cwd;
   const resolvedCwd = resolve(cwd);
@@ -249,7 +259,7 @@ function renderFooterLine2(
     }
   }
   if (cost > 0) {
-    statParts.push(`$${cost.toFixed(3)}`);
+    statParts.push(formatCost(cost));
   }
 
   const contextUsage = ctx.getContextUsage?.();
