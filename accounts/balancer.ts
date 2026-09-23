@@ -42,18 +42,6 @@ export function isAccountEligibleForModel(account: AccountCredential, modelId?: 
 }
 
 /**
- * Deterministically computes FNV-1a hash of a string.
- */
-function fnv1a(str: string): number {
-  let hash = 2166136261;
-  for (let i = 0; i < str.length; i++) {
-    hash ^= str.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return Math.abs(hash);
-}
-
-/**
  * Checks if an error message or object corresponds to rate limiting or quota exhaustion.
  */
 export function isRateLimitError(error: unknown): boolean {
@@ -156,16 +144,6 @@ export class AccountBalancer {
           (e) => e.account.id === boundId
         );
         if (match) return match.account;
-      }
-
-      if (available.length > 0) {
-        // Deterministic hash-based initial affinity across lowest-pacing candidates
-        available.sort((a, b) => a.health.paceDelta - b.health.paceDelta);
-        const minPaceDelta = available[0].health.paceDelta;
-        const topCandidates = available.filter((e) => e.health.paceDelta <= minPaceDelta + 0.15);
-        topCandidates.sort((a, b) => a.account.id.localeCompare(b.account.id));
-        const index = fnv1a(sessionId) % topCandidates.length;
-        return topCandidates[index].account;
       }
     }
 
@@ -341,23 +319,13 @@ export class AccountBalancer {
     if (sessionBoundAccount) {
       // Retain prompt-cache session affinity as long as account is healthy
       chosen = sessionBoundAccount;
-    } else if (sessionId) {
-      // Deterministic hash-based initial affinity across lowest-pacing candidates
-      available.sort((a, b) => a.health.paceDelta - b.health.paceDelta);
-      const minPaceDelta = available[0].health.paceDelta;
-      const topCandidates = available.filter((e) => e.health.paceDelta <= minPaceDelta + 0.15);
-      topCandidates.sort((a, b) => a.account.id.localeCompare(b.account.id));
-      const index = fnv1a(sessionId) % topCandidates.length;
-      chosen = topCandidates[index].account;
-      this.recordSessionBinding(sessionId, provider, chosen.id);
     } else {
-      // Pre-emptive Quota-Ranking: pick the account with the lowest pace delta (furthest under budget / least over budget)
+      // Pick the account with the lowest pace delta (furthest under budget)
       available.sort((a, b) => a.health.paceDelta - b.health.paceDelta);
       chosen = available[0].account;
-    }
-
-    if (sessionId && !this.sessionBindings.get(sessionId)?.get(provider)) {
-      this.recordSessionBinding(sessionId, provider, chosen.id);
+      if (sessionId) {
+        this.recordSessionBinding(sessionId, provider, chosen.id);
+      }
     }
 
     const token = await this.ensureFreshToken(chosen);

@@ -42,7 +42,7 @@ pi-for-raviedho/
 │   ├── index.ts                # /usage command registration (TUI overlay + CLI fallback)
 │   └── types.ts                # Quota report structures
 ├── index.ts                    # Root extension entry point
-├── package.json                # Pi manifest, npm metadata, peerDependencies
+├── package.json                # Pi manifest, package metadata, peerDependencies
 ├── tsconfig.json               # NodeNext TypeScript configuration
 └── README.md                   # User documentation
 ```

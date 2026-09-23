@@ -321,6 +321,7 @@ async function showUsageTui(ctx: ExtensionCommandContext): Promise<void> {
 /**
  * Registers the /usage command with Pi.
  */
+export { registerUsageFooter } from "./footer.js";
 export function registerUsageCommand(pi: ExtensionAPI): void {
   pi.registerCommand("usage", {
     description: "Display provider quota and rate limit status across all configured accounts",

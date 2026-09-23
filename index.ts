@@ -19,7 +19,7 @@ import {
 } from "./antigravity/oauth.js";
 import { streamAntigravity } from "./antigravity/stream.js";
 import { registerCodexFilter } from "./codex-filter/index.js";
-import { registerUsageCommand } from "./usage/index.js";
+import { registerUsageCommand, registerUsageFooter } from "./usage/index.js";
 
 export default async function (pi: ExtensionAPI) {
   // Initialize multi-account store and sync credentials from Pi auth store
@@ -108,8 +108,9 @@ export default async function (pi: ExtensionAPI) {
     },
   });
 
-  // Register /usage quota monitor command
+  // Register /usage quota monitor command and live footer display
   registerUsageCommand(pi);
+  registerUsageFooter(pi);
 
   // Register dynamic OpenAI Codex plan filter and multi-account provider
   registerCodexFilter(pi);
