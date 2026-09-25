@@ -6,14 +6,16 @@ import { fetchCodexUsage } from "../usage/codex.js";
 import { computeTimeElapsedFraction } from "../usage/format.js";
 import { fetchHyperUsage } from "../usage/hyper.js";
 import type { ProviderUsageReport, QuotaBucket } from "../usage/types.js";
+import { AccountStore } from "./store.js";
 import type { AccountCredential } from "./types.js";
 
-const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache TTL
+export const DEFAULT_CACHE_TTL_MS = 30 * 1000; // 30 seconds cache TTL
 
 export interface AccountQuotaHealth {
   isExhausted: boolean;
   usedFraction: number; // 0.0 to 1.0 (highest used window)
   paceDelta: number; // usedFraction - timeElapsedFraction on longest (e.g. weekly) window
+  weight: number; // composite ranking weight (paceDelta - perishable burn urgency discount)
   remainingFraction: number;
   isUnstarted?: boolean; // true if 0% used and reset timer hasn't started ticking yet
   resetTimeMs?: number;
@@ -28,6 +30,8 @@ interface CachedQuotaEntry {
 export class QuotaManager {
   private static instance?: QuotaManager;
   private cache: Map<string, CachedQuotaEntry> = new Map();
+  private inFlightFetches: Map<string, Promise<ProviderUsageReport | null>> = new Map();
+  private updateListeners: Set<() => void> = new Set();
   private cachePath: string;
 
   private constructor() {
@@ -84,6 +88,16 @@ export class QuotaManager {
   }
 
   /**
+   * Subscribes to quota report cache updates.
+   */
+  public onQuotaUpdate(listener: () => void): () => void {
+    this.updateListeners.add(listener);
+    return () => {
+      this.updateListeners.delete(listener);
+    };
+  }
+
+  /**
    * Stores a freshly fetched usage report in memory and disk cache.
    */
   public setReport(accountId: string, report: ProviderUsageReport): void {
@@ -92,6 +106,13 @@ export class QuotaManager {
       fetchedAt: Date.now(),
     });
     this.saveDiskCache();
+    for (const listener of this.updateListeners) {
+      try {
+        listener();
+      } catch {
+        // Ignore listener error
+      }
+    }
   }
 
   /**
@@ -109,49 +130,68 @@ export class QuotaManager {
   public async ensureFreshQuota(
     account: AccountCredential,
     token: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    maxAgeMs: number = DEFAULT_CACHE_TTL_MS
   ): Promise<ProviderUsageReport | null> {
     const entry = this.cache.get(account.id);
     const now = Date.now();
-    if (entry && now - entry.fetchedAt < CACHE_TTL_MS) {
+    if (entry && now - entry.fetchedAt < maxAgeMs) {
       return entry.report;
     }
 
-    try {
-      let report: ProviderUsageReport | null = null;
-      if (account.provider === "google-antigravity") {
-        report = await fetchAntigravityUsage(
-          token,
-          account.projectId || "aicode-consumers",
-          account.email || account.id,
-          signal
-        );
-      } else if (account.provider === "openai-codex") {
-        report = await fetchCodexUsage({
-          accessToken: token,
-          accountId: account.accountId,
-          email: account.email || account.id,
-          refreshToken: account.refresh,
-          signal,
-        });
-      } else if (account.provider === "hyper") {
-        report = await fetchHyperUsage(
-          token,
-          account.email || account.id,
-          signal,
-          account.planType
-        );
-      }
-
-      if (report && !report.error) {
-        this.setReport(account.id, report);
-        return report;
-      }
-    } catch {
-      // Ignore background fetch error
+    const inFlight = this.inFlightFetches.get(account.id);
+    if (inFlight) {
+      return inFlight;
     }
 
-    return entry ? entry.report : null;
+    const fetchPromise = (async (): Promise<ProviderUsageReport | null> => {
+      try {
+        let report: ProviderUsageReport | null = null;
+        if (account.provider === "google-antigravity") {
+          report = await fetchAntigravityUsage(
+            token,
+            account.projectId || "aicode-consumers",
+            account.email || account.id,
+            signal,
+            account.planType
+          );
+        } else if (account.provider === "openai-codex") {
+          report = await fetchCodexUsage({
+            accessToken: token,
+            accountId: account.accountId,
+            email: account.email || account.id,
+            refreshToken: account.refresh,
+            signal,
+          });
+        } else if (account.provider === "hyper") {
+          report = await fetchHyperUsage(
+            token,
+            account.email || account.id,
+            signal,
+            account.planType
+          );
+        }
+
+        if (report && !report.error) {
+          if (report.planType && report.planType !== account.planType) {
+            account.planType = report.planType;
+            account.updatedAt = Date.now();
+            AccountStore.getInstance().upsert(account);
+          }
+          this.setReport(account.id, report);
+          return report;
+        }
+      } catch {
+        // Ignore background fetch error
+      } finally {
+        this.inFlightFetches.delete(account.id);
+      }
+
+      return entry ? entry.report : null;
+    })();
+
+    this.inFlightFetches.set(account.id, fetchPromise);
+    return fetchPromise;
   }
 
   /**
@@ -166,6 +206,7 @@ export class QuotaManager {
         isExhausted: true,
         usedFraction: 1.0,
         paceDelta: 1.0,
+        weight: 1.0,
         remainingFraction: 0.0,
         isUnstarted: false,
         resetTimeMs: account.blockedUntil,
@@ -180,6 +221,7 @@ export class QuotaManager {
         isExhausted: false,
         usedFraction: 0.0,
         paceDelta: 0.0,
+        weight: 0.0,
         remainingFraction: 1.0,
         isUnstarted: true,
       };
@@ -247,13 +289,17 @@ export class QuotaManager {
           computeTimeElapsedFraction(longestBucket.resetTime, longestBucket.windowSeconds, now, longestUsed) ?? 0.0;
       }
 
+      const longestRemaining = Math.max(0, 1 - longestUsed);
+      const urgencyDiscount = longestRemaining * Math.pow(longestTimeElapsed, 2);
       const paceDelta = longestUsed - longestTimeElapsed;
+      const weight = paceDelta - urgencyDiscount;
       const isUnstarted = maxUsed <= 0.0001 && longestTimeElapsed <= 0.0001;
 
       return {
         isExhausted,
         usedFraction: maxUsed,
         paceDelta,
+        weight,
         remainingFraction: Math.max(0, 1 - maxUsed),
         isUnstarted,
         resetTimeMs: soonestResetMs,
@@ -306,13 +352,17 @@ export class QuotaManager {
           computeTimeElapsedFraction(longestBucket.resetTime, longestBucket.windowSeconds, now, longestUsed) ?? 0.0;
       }
 
+      const longestRemaining = Math.max(0, 1 - longestUsed);
+      const urgencyDiscount = longestRemaining * Math.pow(longestTimeElapsed, 2);
       const paceDelta = longestUsed - longestTimeElapsed;
+      const weight = paceDelta - urgencyDiscount;
       const isUnstarted = maxUsed <= 0.0001 && longestTimeElapsed <= 0.0001;
 
       return {
         isExhausted,
         usedFraction: maxUsed,
         paceDelta,
+        weight,
         remainingFraction: Math.max(0, 1 - maxUsed),
         isUnstarted,
         resetTimeMs: soonestResetMs,
@@ -324,6 +374,7 @@ export class QuotaManager {
       isExhausted: false,
       usedFraction: 0.0,
       paceDelta: 0.0,
+      weight: 0.0,
       remainingFraction: 1.0,
     };
   }

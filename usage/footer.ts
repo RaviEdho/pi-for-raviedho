@@ -6,7 +6,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { AccountBalancer } from "../accounts/balancer.js";
-import { QuotaManager } from "../accounts/quota.js";
+import { DEFAULT_CACHE_TTL_MS, QuotaManager } from "../accounts/quota.js";
 import {
   computeTimeElapsedFraction,
   formatRelativeTime,
@@ -312,20 +312,71 @@ function renderFooterLine2(
   return truncateToWidth(leftText, width);
 }
 
+const RUNNING_CACHE_TTL_MS = 30 * 1000; // 30 seconds cache TTL while model is active
+const TOOL_CALL_THROTTLE_MS = 30 * 1000; // Throttle tool call quota checks to once every 30s
+const IDLE_POLL_INTERVAL_MS = 2 * 60 * 1000; // Background idle quota poll every 2 minutes
+
+/**
+ * Triggers a non-blocking background quota refresh for the currently active session account.
+ */
+async function refreshSessionAccountQuota(
+  ctx: ExtensionContext,
+  maxAgeMs: number = 0
+): Promise<void> {
+  const model = ctx.model;
+  if (!model) return;
+
+  const balancer = AccountBalancer.getInstance();
+  const sessionId = ctx.sessionManager?.getSessionId?.();
+  const account = balancer.getSessionAccount(model.provider, sessionId, model.id);
+  if (!account) return;
+
+  const quotaManager = QuotaManager.getInstance();
+  try {
+    const token = await balancer.ensureFreshToken(account);
+    await quotaManager.ensureFreshQuota(
+      account,
+      token,
+      AbortSignal.timeout(5000),
+      maxAgeMs
+    );
+  } catch {
+    // Non-fatal background refresh
+  }
+}
+
 /**
  * Registers the custom footer displaying:
  * - Line 1: Directory & session on left, Model ID & thinking level on far right.
  * - Line 2: Token stats on left, Active account usage bar on far right (under model).
+ * Also registers automated background quota monitoring (idle polling, tool_call throttled checks,
+ * turn settlement refreshes, and model selection updates).
  */
 export function registerUsageFooter(pi: ExtensionAPI): void {
+  let activeTui: { requestRender: () => void } | undefined;
+  let idleTimer: NodeJS.Timeout | undefined;
+  let currentCtx: ExtensionContext | undefined;
+  let lastToolCheckAt = 0;
+
+  // Re-render UI immediately whenever QuotaManager stores fresh quota reports
+  QuotaManager.getInstance().onQuotaUpdate(() => {
+    activeTui?.requestRender();
+  });
+
   function applyFooter(ctx: ExtensionContext): void {
     if (!ctx.hasUI) return;
 
     ctx.ui.setFooter((tui, theme, footerData) => {
+      activeTui = tui;
       const unsub = footerData?.onBranchChange?.(() => tui.requestRender());
 
       return {
-        dispose: unsub,
+        dispose() {
+          unsub?.();
+          if (activeTui === tui) {
+            activeTui = undefined;
+          }
+        },
         invalidate() {},
         render(width: number): string[] {
           const branch = footerData?.getGitBranch?.() ?? null;
@@ -350,6 +401,49 @@ export function registerUsageFooter(pi: ExtensionAPI): void {
   }
 
   pi.on("session_start", async (_event, ctx) => {
+    currentCtx = ctx;
     applyFooter(ctx);
+
+    // Initial background check on session startup to populate footer usage bar
+    void refreshSessionAccountQuota(ctx, DEFAULT_CACHE_TTL_MS);
+
+    // Periodic idle background check every 2 minutes
+    if (idleTimer) clearInterval(idleTimer);
+    idleTimer = setInterval(() => {
+      if (currentCtx && currentCtx.isIdle()) {
+        void refreshSessionAccountQuota(currentCtx, DEFAULT_CACHE_TTL_MS);
+      }
+    }, IDLE_POLL_INTERVAL_MS);
+    idleTimer.unref?.();
+  });
+
+  pi.on("tool_call", (_event, ctx) => {
+    currentCtx = ctx;
+    const now = Date.now();
+    if (now - lastToolCheckAt >= TOOL_CALL_THROTTLE_MS) {
+      lastToolCheckAt = now;
+      void refreshSessionAccountQuota(ctx, RUNNING_CACHE_TTL_MS);
+    }
+    return undefined;
+  });
+
+  pi.on("agent_settled", (_event, ctx) => {
+    currentCtx = ctx;
+    // Turn completed: always trigger fresh quota fetch to capture latest token consumption
+    void refreshSessionAccountQuota(ctx, 0);
+  });
+
+  pi.on("model_select", (_event, ctx) => {
+    currentCtx = ctx;
+    void refreshSessionAccountQuota(ctx, DEFAULT_CACHE_TTL_MS);
+  });
+
+  pi.on("session_shutdown", () => {
+    if (idleTimer) {
+      clearInterval(idleTimer);
+      idleTimer = undefined;
+    }
+    currentCtx = undefined;
+    activeTui = undefined;
   });
 }

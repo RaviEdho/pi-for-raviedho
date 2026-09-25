@@ -154,7 +154,7 @@ export class AccountBalancer {
         // Prioritize unstarted accounts (0 usage, 0 timer elapsed) so their reset cycle begins
         if (a.health.isUnstarted && !b.health.isUnstarted) return -1;
         if (!a.health.isUnstarted && b.health.isUnstarted) return 1;
-        return a.health.paceDelta - b.health.paceDelta;
+        return a.health.weight - b.health.weight;
       });
       return available[0].account;
     }
@@ -361,11 +361,11 @@ export class AccountBalancer {
       chosen = sessionBoundAccount;
     } else {
       // Pick unstarted accounts first (0 usage, unstarted timer) so their reset window begins,
-      // otherwise pick the account furthest under budget (lowest pace delta).
+      // otherwise pick the account with the lowest composite weight (under budget + perishable burn urgency discount).
       available.sort((a, b) => {
         if (a.health.isUnstarted && !b.health.isUnstarted) return -1;
         if (!a.health.isUnstarted && b.health.isUnstarted) return 1;
-        return a.health.paceDelta - b.health.paceDelta;
+        return a.health.weight - b.health.weight;
       });
       chosen = available[0].account;
       if (sessionId) {
