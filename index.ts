@@ -19,6 +19,21 @@ import {
 } from "./antigravity/oauth.js";
 import { streamAntigravity } from "./antigravity/stream.js";
 import { registerCodexFilter } from "./codex-filter/index.js";
+import {
+  HYPER_API_BASE_URL,
+  PROVIDER_ID as HYPER_PROVIDER_ID,
+  PROVIDER_NAME as HYPER_PROVIDER_NAME,
+} from "./hyper/constants.js";
+import {
+  DEFAULT_HYPER_MODELS,
+  fetchHyperModels,
+} from "./hyper/models.js";
+import {
+  getHyperApiKey,
+  loginHyper,
+  refreshHyperToken,
+} from "./hyper/oauth.js";
+import { streamHyper } from "./hyper/stream.js";
 import { registerUsageCommand, registerUsageFooter } from "./usage/index.js";
 
 export default async function (pi: ExtensionAPI) {
@@ -104,6 +119,69 @@ export default async function (pi: ExtensionAPI) {
             apiKey,
           });
         }
+      );
+    },
+  });
+
+  // Retrieve active token for Charm Hyper initial model discovery
+  let hyperToken: string | undefined = process.env.HYPER_API_KEY;
+  const activeHyperAccount = store.getActive(HYPER_PROVIDER_ID);
+  if (activeHyperAccount) {
+    try {
+      hyperToken = await balancer.ensureFreshToken(activeHyperAccount);
+    } catch {
+      // Non-fatal if offline
+    }
+  }
+
+  // Dynamically fetch live models from Charm Hyper
+  let hyperModels = DEFAULT_HYPER_MODELS;
+  try {
+    const dynamicHyperModels = await fetchHyperModels(hyperToken);
+    if (dynamicHyperModels && dynamicHyperModels.length > 0) {
+      hyperModels = dynamicHyperModels;
+    }
+  } catch {
+    // Keep defaults on network failure
+  }
+
+  // Register Charm Hyper provider with multi-account failover and streaming support
+  pi.registerProvider(HYPER_PROVIDER_ID, {
+    name: HYPER_PROVIDER_NAME,
+    baseUrl: HYPER_API_BASE_URL,
+    apiKey: "$HYPER_API_KEY",
+    api: "openai-completions",
+
+    models: hyperModels,
+
+    async refreshModels(context) {
+      const currentActive = store.getActive(HYPER_PROVIDER_ID);
+      let activeToken = process.env.HYPER_API_KEY;
+      if (currentActive) {
+        try {
+          activeToken = await balancer.ensureFreshToken(currentActive);
+        } catch {
+          // Ignore
+        }
+      }
+      const live = await fetchHyperModels(activeToken, context?.signal);
+      return live && live.length > 0 ? live : hyperModels;
+    },
+
+    oauth: {
+      name: HYPER_PROVIDER_NAME,
+      login: loginHyper,
+      refreshToken: refreshHyperToken,
+      getApiKey: getHyperApiKey,
+    },
+
+    streamSimple(model, transcript, options) {
+      return executeWithMultiAccountFailover(
+        HYPER_PROVIDER_ID,
+        model,
+        transcript,
+        options,
+        (m, ctx, opts, resolvedAuth) => streamHyper(m, ctx, opts, resolvedAuth)
       );
     },
   });

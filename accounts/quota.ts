@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fetchAntigravityUsage } from "../usage/antigravity.js";
 import { fetchCodexUsage } from "../usage/codex.js";
 import { computeTimeElapsedFraction } from "../usage/format.js";
+import { fetchHyperUsage } from "../usage/hyper.js";
 import type { ProviderUsageReport, QuotaBucket } from "../usage/types.js";
 import type { AccountCredential } from "./types.js";
 
@@ -133,6 +134,13 @@ export class QuotaManager {
           refreshToken: account.refresh,
           signal,
         });
+      } else if (account.provider === "hyper") {
+        report = await fetchHyperUsage(
+          token,
+          account.email || account.id,
+          signal,
+          account.planType
+        );
       }
 
       if (report && !report.error) {

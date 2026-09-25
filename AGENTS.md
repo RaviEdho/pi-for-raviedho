@@ -9,6 +9,7 @@ Guidance and instructions for AI agents working in this repository.
 ### Key Capabilities
 - **Multi-Account Manager & Balancer (`accounts/`)**: Multi-account store (`accounts.json`), session affinity hashing, weekly reset pace optimization, automatic sync from Pi (`auth.json`), automatic token refresh, and transparent 429 rate limit failover across accounts during streaming turns.
 - **Google Antigravity Provider (`antigravity/`)**: Custom provider integrating with Google Cloud Code Assist (`daily-cloudcode-pa.googleapis.com`) using OAuth 2.0 with automatic project discovery / onboarding (`cloudaicompanionProject`).
+- **Charm Hyper Provider (`hyper/`)**: Custom provider connecting to Charm Hyper (`https://hyper.charm.land/v1`) with device code OAuth flow (`/login hyper`), API key authentication (`HYPER_API_KEY`), live dynamic model discovery (`/v1/provider`), reasoning effort level translation, and multi-account load balancing.
 - **OpenAI Codex Plan Filter (`codex-filter/`)**: Dynamic tier detection from OAuth token JWT claims (`chatgpt_plan_type`). Fetches the live model catalog from OpenAI and drops unsupported models from `/model` and `pi --list-models` via `@earendil-works/pi-ai`'s native `filterModels` hook.
 - **Provider Quota & Usage Monitor (`usage/`)**: Live multi-account quota tracking, percentage consumption bars, and reset countdowns across configured providers via the `/usage` command.
 
@@ -35,10 +36,17 @@ pi-for-raviedho/
 │   ├── index.ts                # Provider wrapper with filterModels hook
 │   ├── plan.ts                 # JWT claim parsing for chatgpt_plan_type & chatgpt_account_id
 │   └── types.ts                # Catalog & cache types
+├── hyper/
+│   ├── constants.ts            # Base URLs, API endpoints, User-Agent, timeouts
+│   ├── models.ts               # Dynamic model catalog discovery & fallback mapping from Hyper
+│   ├── oauth.ts                # OAuth 2.0 Device Flow login, loopback poll, and token exchange
+│   ├── stream.ts               # Streaming client via OpenAI Chat Completions compatibility
+│   └── types.ts                # Hyper device auth, token, and model schemas
 ├── usage/
 │   ├── antigravity.ts          # Cloud Code Assist quota bucket scraper
 │   ├── codex.ts                # OpenAI Codex /wham/usage quota scraper
 │   ├── format.ts               # Terminal & ASCII progress bar formatting
+│   ├── hyper.ts                # Charm Hyper /v1/credits quota scraper
 │   ├── index.ts                # /usage command registration (TUI overlay + CLI fallback)
 │   └── types.ts                # Quota report structures
 ├── index.ts                    # Root extension entry point
@@ -66,6 +74,7 @@ pi-for-raviedho/
 4. **Zero Hardcoded Model Names**:
    - Model discovery must be dynamic whenever possible.
    - For Antigravity: query Google's `fetchAvailableModels` endpoint.
+   - For Charm Hyper: query `https://hyper.charm.land/v1/provider`.
    - For OpenAI Codex: query `https://chatgpt.com/backend-api/codex/models?client_version=1.0.0` and cross-reference `available_in_plans`.
 
 5. **Type Safety**:

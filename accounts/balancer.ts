@@ -2,6 +2,7 @@ import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { discoverProject, refreshAntigravityToken } from "../antigravity/oauth.js";
 import { DEFAULT_FALLBACK_FREE_MODELS, loadCachedCatalog } from "../codex-filter/catalog.js";
 import { getCodexPlanType } from "../codex-filter/plan.js";
+import { refreshHyperToken } from "../hyper/oauth.js";
 import { QuotaManager } from "./quota.js";
 import { AccountStore } from "./store.js";
 import type { AccountCredential, ResolvedAccountAuth } from "./types.js";
@@ -48,13 +49,14 @@ export function isRateLimitError(error: unknown): boolean {
   if (!error) return false;
   const msg = error instanceof Error ? error.message : String(error);
   return (
-    /429|rate.?limit|quota.?exceeded|resource.?exhausted|usage.?limit|usage.?not.?included|too.?many.?requests|freeusagelimiterror|gousagelimiterror/i.test(
+    /429|402|rate.?limit|quota.?exceeded|resource.?exhausted|usage.?limit|usage.?not.?included|too.?many.?requests|freeusagelimiterror|gousagelimiterror|insufficient.?hypercredits|billing_error/i.test(
       msg
     ) ||
     (typeof error === "object" &&
       error !== null &&
       "status" in error &&
-      (error as { status: unknown }).status === 429)
+      ((error as { status: unknown }).status === 429 ||
+        (error as { status: unknown }).status === 402))
   );
 }
 
@@ -245,7 +247,40 @@ export class AccountBalancer {
       }
     }
 
+    if (account.provider === "hyper") {
+      if (account.type === "api_key" || account.apiKey) {
+        return account.apiKey || account.access || "";
+      }
+      if (account.refresh && (!account.expires || account.expires - Date.now() < EXPIRY_BUFFER_MS)) {
+        try {
+          const cred = await refreshHyperToken(
+            {
+              access: account.access || "",
+              refresh: account.refresh,
+              expires: account.expires || Date.now() + 3600 * 1000,
+            },
+            new AbortController().signal
+          );
+          if (cred && cred.access) {
+            account.access = cred.access;
+            if (cred.refresh) account.refresh = cred.refresh;
+            account.expires = cred.expires;
+            account.updatedAt = Date.now();
+            this.store.upsert(account);
+            return cred.access;
+          }
+        } catch (err) {
+          console.error(`[AccountBalancer] Charm Hyper token refresh failed for ${account.id}:`, err);
+          if (account.access) return account.access;
+          throw err;
+        }
+      }
+      if (account.access) return account.access;
+      if (account.apiKey) return account.apiKey;
+    }
+
     if (account.access) return account.access;
+    if (account.apiKey) return account.apiKey;
     throw new Error(`Cannot refresh token for provider ${account.provider}`);
   }
 

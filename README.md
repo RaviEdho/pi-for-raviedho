@@ -1,9 +1,15 @@
 # pi-for-raviedho
 
-Personalized Pi extension package providing the **Google Antigravity** provider with full OAuth authentication and Cloud Code Assist streaming support.
+Personalized Pi extension package providing the **Google Antigravity** provider, **Charm Hyper** inference provider, and dynamic OpenAI Codex plan filtering.
 
 ## Features
 
+- **Charm Hyper Inference Provider**:
+  - Fast, cost-effective inference for coding agents via Charm Hyper (`https://hyper.charm.land`).
+  - Dual authentication: OAuth 2.0 Device Code Flow (`/login hyper`) and API key via `HYPER_API_KEY`.
+  - Dynamic model discovery from `/v1/provider` with reasoning effort levels, image attachment support, and context window awareness (DeepSeek V4.1 Flash, Qwen 3.8 Max, Kimi K3, GLM 5.3, MiniMax M3, Inkling, etc.).
+  - Multi-account pooling with transparent 429 rate limit & 402 billing failover.
+  - Live Hypercredit (HC) balance tracking in `/usage` and interactive footer status bar.
 - **OAuth 2.0 Integration**: Authenticate via `/login google-antigravity` using Google OAuth (browser callback on port 51121 with manual prompt fallback for remote/headless setups).
 - **Automated Cloud Code Assist Project Discovery**: Automatically detects or provisions the Antigravity free tier (`cloudaicompanionProject`) via Cloud Code Assist (`daily-cloudcode-pa.googleapis.com`).
 - **Full Model Support**:
@@ -42,13 +48,20 @@ pi list
 ```bash
 # In an interactive Pi session:
 /login google-antigravity
+
+# Or login to Charm Hyper:
+/login hyper
 ```
 
-Credentials and tokens are stored in `~/.pi/agent/auth.json` and refreshed automatically.
+Credentials and tokens are stored in `~/.pi/agent/auth.json` and refreshed automatically. You can also export `HYPER_API_KEY="sk-hyper-..."` directly.
 
-### 3. Running with Antigravity Models
+### 3. Running with Models
 
 ```bash
+# Interactive mode with Charm Hyper
+pi --model hyper/deepseek-v4.1-flash
+pi --model hyper/qwen3.8-max
+
 # Interactive mode with default Antigravity model
 pi --model google-antigravity/gemini-3.1-pro
 

@@ -1,7 +1,7 @@
 {
   "name": "pi-for-raviedho",
   "version": "0.1.0",
-  "description": "Personalized Pi extension package providing Google Antigravity provider and dynamic OpenAI Codex plan filtering.",
+  "description": "Personalized Pi extension package providing Google Antigravity, Charm Hyper inference provider, and dynamic OpenAI Codex plan filtering.",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -20,6 +20,7 @@
     "accounts",
     "antigravity",
     "codex-filter",
+    "hyper",
     "usage",
     "README.md"
   ],

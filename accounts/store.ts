@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type { AccountCredential, AccountStoreData } from "./types.js";
 
 const STORE_VERSION = 1;
-export const SUPPORTED_PROVIDERS = new Set(["google-antigravity", "openai-codex"]);
+export const SUPPORTED_PROVIDERS = new Set(["google-antigravity", "openai-codex", "hyper"]);
 
 export class AccountStore {
   private static instance?: AccountStore;
@@ -273,11 +273,13 @@ export class AccountStore {
       email?: string,
       accountId?: string,
       id?: string,
-      refresh?: string
+      refresh?: string,
+      key?: string
     ) => {
       return this.data.accounts.find((a) => {
         if (a.provider !== provider) return false;
         if (id && a.id === id) return true;
+        if (key && (a.apiKey === key || a.access === key)) return true;
         if (email && a.email && a.email.toLowerCase() === email.toLowerCase()) return true;
         if (accountId && a.accountId && a.accountId === accountId) return true;
         if (refresh && a.refresh && a.refresh === refresh) return true;
@@ -351,23 +353,28 @@ export class AccountStore {
             const cred = entry as Record<string, unknown>;
             const access = typeof cred.access === "string" ? cred.access : undefined;
             const refresh = typeof cred.refresh === "string" ? cred.refresh : undefined;
+            const teamName = typeof cred.teamName === "string" ? cred.teamName : undefined;
+            const teamId = typeof cred.teamId === "string" ? cred.teamId : undefined;
             const email =
               (typeof cred.email === "string" ? cred.email : undefined) ||
+              teamName ||
               extractEmailFromJwt(access);
             const accountId =
               (typeof cred.accountId === "string" ? cred.accountId : undefined) ||
               extractAccountIdFromJwt(access);
             const projectId = typeof cred.projectId === "string" ? cred.projectId : undefined;
+            const key = typeof cred.key === "string" ? cred.key : undefined;
             const tokenSuffix = refresh ? `token-${refresh.slice(-8)}` : access ? `tok-${access.slice(-8)}` : undefined;
-            const identity = email || accountId || (projectId && projectId !== "aicode-consumers" ? projectId : undefined) || tokenSuffix || "default";
+            const identity = email || accountId || (projectId && projectId !== "aicode-consumers" ? projectId : undefined) || (key ? `key-${key.slice(-6)}` : undefined) || tokenSuffix || "default";
             const id = AccountStore.generateAccountId(provider, identity);
 
             const planType =
               (typeof cred.planType === "string" ? cred.planType : undefined) ||
               (provider === "openai-codex" ? extractPlanTypeFromJwt(access) : undefined) ||
+              (provider === "hyper" ? "free" : undefined) ||
               (provider === "google-antigravity" ? "free-tier" : undefined);
             const isOAuth = cred.type === "oauth" || !!cred.access;
-            const existing = findExisting(provider, email, accountId, id, refresh);
+            const existing = findExisting(provider, email, accountId, id, refresh, key);
 
             if (!existing) {
               const account: AccountCredential = {
@@ -377,11 +384,13 @@ export class AccountStore {
                 email,
                 accountId,
                 projectId,
+                orgId: teamId,
+                orgName: teamName,
                 planType,
                 access,
                 refresh,
                 expires: typeof cred.expires === "number" ? cred.expires : undefined,
-                apiKey: typeof cred.key === "string" ? cred.key : undefined,
+                apiKey: key,
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
               };
@@ -392,6 +401,9 @@ export class AccountStore {
               if (email && !existing.email) existing.email = email;
               if (accountId && !existing.accountId) existing.accountId = accountId;
               if (projectId && !existing.projectId) existing.projectId = projectId;
+              if (teamId && !existing.orgId) existing.orgId = teamId;
+              if (teamName && !existing.orgName) existing.orgName = teamName;
+              if (key && !existing.apiKey) existing.apiKey = key;
               if (planType && !existing.planType) existing.planType = planType;
               const credExpires = typeof cred.expires === "number" ? cred.expires : undefined;
               const isPiAuthNewer =
@@ -413,6 +425,37 @@ export class AccountStore {
         }
       } catch {
         // Ignore errors
+      }
+    }
+
+    // Check process.env.HYPER_API_KEY
+    if (process.env.HYPER_API_KEY) {
+      const envKey = process.env.HYPER_API_KEY.trim();
+      if (envKey) {
+        const id = AccountStore.generateAccountId("hyper", "env-key");
+        const existing = findExisting("hyper", undefined, undefined, id, undefined, envKey);
+        if (!existing) {
+          this.data.accounts.push({
+            id,
+            provider: "hyper",
+            type: "api_key",
+            apiKey: envKey,
+            access: envKey,
+            email: "env-key",
+            planType: "free",
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          });
+          if (!this.data.activeAccounts["hyper"]) {
+            this.data.activeAccounts["hyper"] = id;
+          }
+          modified = true;
+        } else if (existing.apiKey !== envKey) {
+          existing.apiKey = envKey;
+          existing.access = envKey;
+          existing.updatedAt = Date.now();
+          modified = true;
+        }
       }
     }
 

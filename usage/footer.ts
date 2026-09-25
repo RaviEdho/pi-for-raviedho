@@ -61,7 +61,12 @@ function extractKeyBuckets(
   }
 
   let relevant = allBuckets;
-  if (report.providerId === "google-antigravity") {
+  if (report.providerId === "hyper") {
+    const hyperBucket = allBuckets.find((b) => b.bucketId === "hypercredits");
+    if (hyperBucket) {
+      return { primary: hyperBucket };
+    }
+  } else if (report.providerId === "google-antigravity") {
     const isClaudeOrGpt = cleanModel.includes("claude") || cleanModel.includes("gpt");
     const targetPrefix = isClaudeOrGpt ? "3p" : "gemini";
     const filtered = allBuckets.filter((b) =>
@@ -216,7 +221,12 @@ function buildUsageBar(
     secondarySegment = theme.fg("dim", ` · ${secLabel}: ${secPct}%`);
   }
 
-  return `${prefix}  ${barSegment}${resetSegment}${secondarySegment}`;
+  let summarySegment = "";
+  if (report.providerId === "hyper" && report.capacitySummary) {
+    summarySegment = theme.fg("dim", ` · ${report.capacitySummary}`);
+  }
+
+  return `${prefix}  ${barSegment}${resetSegment}${secondarySegment}${summarySegment}`;
 }
 
 /**

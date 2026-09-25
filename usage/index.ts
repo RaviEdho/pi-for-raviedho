@@ -13,6 +13,7 @@ import { AccountStore } from "../accounts/store.js";
 import { fetchAntigravityUsage } from "./antigravity.js";
 import { fetchCodexUsage } from "./codex.js";
 import { formatUsageText } from "./format.js";
+import { fetchHyperUsage } from "./hyper.js";
 import type { ProviderUsageReport, SessionUsageInfo } from "./types.js";
 
 interface StoredAuthEntry {
@@ -71,6 +72,7 @@ export async function collectUsageReports(
 
   const antigravityAccounts = store.list("google-antigravity");
   const codexAccounts = store.list("openai-codex");
+  const hyperAccounts = store.list("hyper");
 
   // 1. Google Antigravity multi-account fetch in parallel
   const antigravityPromises: Promise<ProviderUsageReport>[] = [];
@@ -212,8 +214,78 @@ export async function collectUsageReports(
     }
   }
 
+  // 3. Charm Hyper multi-account fetch in parallel
+  const hyperPromises: Promise<ProviderUsageReport>[] = [];
+  if (hyperAccounts.length > 0) {
+    const sessionAccount = balancer.getSessionAccount(
+      "hyper",
+      options?.sessionId,
+      options?.currentModelId
+    );
+    for (const acc of hyperAccounts) {
+      if (signal?.aborted) break;
+      const isSession = sessionAccount?.id === acc.id;
+      const isCooldown = acc.blockedUntil && acc.blockedUntil > Date.now();
+      const mins = isCooldown ? Math.max(1, Math.ceil((acc.blockedUntil! - Date.now()) / 60000)) : 0;
+      const cooldownTag = isCooldown ? ` [COOLDOWN ~${mins}m]` : "";
+      const label = `${acc.email || acc.orgName || acc.id}${cooldownTag}`;
+
+      hyperPromises.push(
+        (async (): Promise<ProviderUsageReport> => {
+          try {
+            const token = await balancer.ensureFreshToken(acc);
+            const report = await fetchHyperUsage(
+              token,
+              label,
+              signal,
+              acc.planType
+            );
+            report.isSessionAccount = isSession;
+            report.accountId = acc.id;
+            QuotaManager.getInstance().setReport(acc.id, report);
+            return report;
+          } catch (err) {
+            return {
+              providerId: "hyper",
+              providerName: "Charm Hyper",
+              accountEmail: label,
+              accountId: acc.id,
+              isSessionAccount: isSession,
+              planType: acc.planType,
+              fetchedAt: Date.now(),
+              groups: [],
+              error: err instanceof Error ? err.message : String(err),
+            };
+          }
+        })()
+      );
+    }
+  } else {
+    // Fallback to auth.json or HYPER_API_KEY
+    const authMap = loadConfiguredAuth();
+    const hyperAuth = authMap["hyper"];
+    const fallbackToken = hyperAuth?.access || hyperAuth?.key || process.env.HYPER_API_KEY;
+    if (fallbackToken) {
+      hyperPromises.push(
+        (async (): Promise<ProviderUsageReport> => {
+          const report = await fetchHyperUsage(
+            fallbackToken,
+            hyperAuth?.email || "default",
+            signal
+          );
+          report.isSessionAccount = true;
+          return report;
+        })()
+      );
+    }
+  }
+
   // Await all provider account queries concurrently
-  const settled = await Promise.allSettled([...antigravityPromises, ...codexPromises]);
+  const settled = await Promise.allSettled([
+    ...antigravityPromises,
+    ...codexPromises,
+    ...hyperPromises,
+  ]);
   for (const s of settled) {
     if (s.status === "fulfilled") {
       reports.push(s.value);
