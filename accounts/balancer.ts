@@ -3,6 +3,7 @@ import { discoverProject, refreshAntigravityToken } from "../antigravity/oauth.j
 import { DEFAULT_FALLBACK_FREE_MODELS, loadCachedCatalog } from "../codex-filter/catalog.js";
 import { getCodexPlanType } from "../codex-filter/plan.js";
 import { refreshHyperToken } from "../hyper/oauth.js";
+import type { ProviderUsageReport } from "../usage/types.js";
 import { QuotaManager } from "./quota.js";
 import { AccountStore } from "./store.js";
 import type { AccountCredential, ResolvedAccountAuth } from "./types.js";
@@ -312,6 +313,18 @@ export class AccountBalancer {
     }
 
     const quotaManager = QuotaManager.getInstance();
+
+    // If candidate accounts have in-flight background checks, await them with a 1.5s race limit
+    const inFlightPromises = candidates
+      .map((acc) => quotaManager.getInFlight(acc.id))
+      .filter((p): p is Promise<ProviderUsageReport | null> => p != null);
+
+    if (inFlightPromises.length > 0) {
+      await Promise.race([
+        Promise.allSettled(inFlightPromises),
+        new Promise((resolve) => setTimeout(resolve, 1500)),
+      ]);
+    }
 
     // Preemptive quota check: fetch live quota for candidates lacking cached reports
     await Promise.allSettled(

@@ -98,6 +98,13 @@ export class QuotaManager {
   }
 
   /**
+   * Retrieves an in-flight quota fetch promise for an account, if any.
+   */
+  public getInFlight(accountId: string): Promise<ProviderUsageReport | null> | undefined {
+    return this.inFlightFetches.get(accountId);
+  }
+
+  /**
    * Stores a freshly fetched usage report in memory and disk cache.
    */
   public setReport(accountId: string, report: ProviderUsageReport): void {

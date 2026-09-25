@@ -5,8 +5,9 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { AccountBalancer } from "../accounts/balancer.js";
+import { AccountBalancer, isAccountEligibleForModel } from "../accounts/balancer.js";
 import { DEFAULT_CACHE_TTL_MS, QuotaManager } from "../accounts/quota.js";
+import { AccountStore } from "../accounts/store.js";
 import {
   computeTimeElapsedFraction,
   formatRelativeTime,
@@ -317,6 +318,45 @@ const TOOL_CALL_THROTTLE_MS = 30 * 1000; // Throttle tool call quota checks to o
 const IDLE_POLL_INTERVAL_MS = 2 * 60 * 1000; // Background idle quota poll every 2 minutes
 
 /**
+ * Triggers a non-blocking background quota refresh for all eligible candidate accounts
+ * of the currently active model provider.
+ */
+async function refreshCandidateAccounts(
+  ctx: ExtensionContext,
+  force: boolean = false
+): Promise<void> {
+  const model = ctx.model;
+  if (!model) return;
+
+  const store = AccountStore.getInstance();
+  const balancer = AccountBalancer.getInstance();
+  const allAccounts = store.list(model.provider);
+  const candidates = allAccounts.filter(
+    (acc) => !acc.disabledCause && isAccountEligibleForModel(acc, model.id)
+  );
+  if (candidates.length === 0) return;
+
+  const quotaManager = QuotaManager.getInstance();
+  const maxAgeMs = force ? 0 : DEFAULT_CACHE_TTL_MS;
+
+  await Promise.allSettled(
+    candidates.map(async (account) => {
+      try {
+        const token = await balancer.ensureFreshToken(account);
+        await quotaManager.ensureFreshQuota(
+          account,
+          token,
+          AbortSignal.timeout(5000),
+          maxAgeMs
+        );
+      } catch {
+        // Non-fatal background refresh error
+      }
+    })
+  );
+}
+
+/**
  * Triggers a non-blocking background quota refresh for the currently active session account.
  */
 async function refreshSessionAccountQuota(
@@ -404,14 +444,14 @@ export function registerUsageFooter(pi: ExtensionAPI): void {
     currentCtx = ctx;
     applyFooter(ctx);
 
-    // Initial background check on session startup to populate footer usage bar
-    void refreshSessionAccountQuota(ctx, DEFAULT_CACHE_TTL_MS);
+    // Non-blocking fresh parallel check for all candidate accounts on startup
+    void refreshCandidateAccounts(ctx, true);
 
     // Periodic idle background check every 2 minutes
     if (idleTimer) clearInterval(idleTimer);
     idleTimer = setInterval(() => {
       if (currentCtx && currentCtx.isIdle()) {
-        void refreshSessionAccountQuota(currentCtx, DEFAULT_CACHE_TTL_MS);
+        void refreshCandidateAccounts(currentCtx, false);
       }
     }, IDLE_POLL_INTERVAL_MS);
     idleTimer.unref?.();
@@ -435,7 +475,8 @@ export function registerUsageFooter(pi: ExtensionAPI): void {
 
   pi.on("model_select", (_event, ctx) => {
     currentCtx = ctx;
-    void refreshSessionAccountQuota(ctx, DEFAULT_CACHE_TTL_MS);
+    // Non-blocking fresh parallel check for new model's candidate accounts
+    void refreshCandidateAccounts(ctx, true);
   });
 
   pi.on("session_shutdown", () => {
